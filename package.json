@@ -1,0 +1,20 @@
+{
+  "name": "maskord",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "app/shared",
+    "app/desktop",
+    "www"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace=www",
+    "dev:desktop": "npm run dev --workspace=app/desktop",
+    "build:web": "npm run build --workspace=www",
+    "build:desktop": "npm run build --workspace=app/desktop",
+    "deploy:web": "bash scripts/deploy.sh"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

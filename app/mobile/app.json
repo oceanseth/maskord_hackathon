@@ -1,0 +1,47 @@
+{
+  "expo": {
+    "name": "Maskord",
+    "slug": "maskord",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0f"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.maskord.app",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Maskord needs microphone access to participate in voice channels.",
+        "NSCameraUsageDescription": "Maskord needs camera access for video calls."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0f"
+      },
+      "package": "com.maskord.app",
+      "permissions": [
+        "RECORD_AUDIO",
+        "CAMERA",
+        "MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-av",
+        { "microphonePermission": "Allow Maskord to access your microphone for voice channels." }
+      ]
+    ],
+    "extra": {
+      "eas": { "projectId": "maskord-mobile" }
+    }
+  }
+}

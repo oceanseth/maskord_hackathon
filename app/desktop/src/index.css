@@ -1,0 +1,36 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-[#0a0a0f] text-[#e2e8f0] font-body antialiased select-none;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  #root {
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: #2a2a3e; border-radius: 2px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3a5e; }
+
+  /* Allow text selection in messages */
+  .selectable { user-select: text; }
+}
+
+@layer utilities {
+  .drag-region { -webkit-app-region: drag; }
+  .no-drag { -webkit-app-region: no-drag; }
+
+  .scrollable {
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+}

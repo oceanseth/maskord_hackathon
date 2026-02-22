@@ -1,0 +1,104 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+
+    "presence": {
+      "$userId": {
+        // Anyone authenticated can read presence
+        ".read": "auth != null",
+        // Only the user themselves can write their presence
+        ".write": "auth != null && auth.uid == $userId",
+        ".validate": "newData.hasChildren(['status', 'lastSeen'])",
+        "status": {
+          ".validate": "newData.isString() && (newData.val() == 'online' || newData.val() == 'idle' || newData.val() == 'dnd' || newData.val() == 'offline')"
+        },
+        "lastSeen": {
+          ".validate": "newData.isNumber()"
+        },
+        "activeGuildId": {
+          ".validate": "newData.isString() || newData.val() == null"
+        },
+        "activeChannelId": {
+          ".validate": "newData.isString() || newData.val() == null"
+        }
+      }
+    },
+
+    "voiceState": {
+      "$guildId": {
+        "$channelId": {
+          // Any authenticated user can read voice channel state (to show who's in the channel)
+          ".read": "auth != null",
+          "$userId": {
+            // Users can only write their own voice state
+            ".write": "auth != null && auth.uid == $userId",
+            ".validate": "newData.hasChildren(['joinedAt', 'muted', 'deafened'])",
+            "joinedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "muted": {
+              ".validate": "newData.isBoolean()"
+            },
+            "deafened": {
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        }
+      }
+    },
+
+    "voiceSignaling": {
+      "$roomId": {
+        // Any authenticated user can read a signaling room (needed for WebRTC)
+        ".read": "auth != null",
+
+        // The caller creates the room
+        ".write": "auth != null",
+
+        ".validate": "newData.hasChildren(['callerId', 'status', 'createdAt'])",
+
+        "offer": {
+          ".validate": "newData.hasChildren(['type', 'sdp'])"
+        },
+        "answer": {
+          ".validate": "newData.hasChildren(['type', 'sdp'])"
+        },
+        "callerId": {
+          ".validate": "newData.isString()"
+        },
+        "calleeId": {
+          ".validate": "newData.isString() || newData.val() == null"
+        },
+        "status": {
+          ".validate": "newData.isString() && (newData.val() == 'offer' || newData.val() == 'answer' || newData.val() == 'ended')"
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "guildId": {
+          ".validate": "newData.isString()"
+        },
+        "channelId": {
+          ".validate": "newData.isString()"
+        },
+
+        "offerCandidates": {
+          "$candidateId": {
+            ".read": "auth != null",
+            ".write": "auth != null",
+            ".validate": "newData.hasChildren(['candidate', 'sdpMid', 'sdpMLineIndex'])"
+          }
+        },
+
+        "answerCandidates": {
+          "$candidateId": {
+            ".read": "auth != null",
+            ".write": "auth != null",
+            ".validate": "newData.hasChildren(['candidate', 'sdpMid', 'sdpMLineIndex'])"
+          }
+        }
+      }
+    }
+  }
+}

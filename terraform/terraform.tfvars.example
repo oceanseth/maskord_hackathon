@@ -1,0 +1,9 @@
+# Copy this to terraform.tfvars (git-ignored) and fill in your values
+# terraform.tfvars is in .gitignore — never commit it
+
+domain_name            = "maskord.com"
+www_subdomain          = "www.maskord.com"
+s3_bucket_name         = "maskord-website-prod"
+aws_region             = "us-east-1"
+environment            = "production"
+cloudfront_price_class = "PriceClass_100"

@@ -1,0 +1,211 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ─── Helper Functions ──────────────────────────────────────────────────────
+
+    function isAuthed() {
+      return request.auth != null;
+    }
+
+    function isOwner(uid) {
+      return request.auth.uid == uid;
+    }
+
+    // Check if the requesting user is a member of a guild
+    function isMember(guildId) {
+      return isAuthed() &&
+        exists(/databases/$(database)/documents/guilds/$(guildId)/members/$(request.auth.uid));
+    }
+
+    // Check if requesting user is the guild owner
+    function isGuildOwner(guildId) {
+      return isAuthed() &&
+        get(/databases/$(database)/documents/guilds/$(guildId)).data.ownerId == request.auth.uid;
+    }
+
+    // Get the member document for the requesting user in a guild
+    function getMember(guildId) {
+      return get(/databases/$(database)/documents/guilds/$(guildId)/members/$(request.auth.uid)).data;
+    }
+
+    // Get a role document
+    function getRole(guildId, roleId) {
+      return get(/databases/$(database)/documents/guilds/$(guildId)/roles/$(roleId)).data;
+    }
+
+    // Compute base permissions from all of a member's roles (simplified bitfield check)
+    // Returns true if any of the member's roles has ADMINISTRATOR (bit 17 = 131072)
+    function memberIsAdmin(guildId) {
+      let member = getMember(guildId);
+      // Guild owner always has admin
+      return isGuildOwner(guildId) ||
+        // Check if member has at least one role with ADMINISTRATOR bit set
+        (member.roles.size() > 0 &&
+         getRole(guildId, member.roles[0]).permissions & 131072 != 0);
+    }
+
+    // Check if a member's first role has a specific permission bit set
+    // For more complex multi-role checks, use Cloud Functions
+    function memberHasPermission(guildId, permBit) {
+      return memberIsAdmin(guildId) ||
+        (getMember(guildId).roles.size() > 0 &&
+         getRole(guildId, getMember(guildId).roles[0]).permissions & permBit != 0);
+    }
+
+    // ─── Users ─────────────────────────────────────────────────────────────────
+
+    match /users/{userId} {
+      // Authenticated users can read any profile (needed for displaying member names)
+      allow read: if isAuthed();
+
+      // Users can only write their own profile
+      allow create: if isOwner(userId) &&
+        request.resource.data.keys().hasAll(['displayName', 'email', 'avatarUrl', 'bio', 'status', 'createdAt', 'masks']);
+      allow update: if isOwner(userId) &&
+        // Prevent changing email directly (managed by Firebase Auth)
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['email', 'createdAt']);
+      allow delete: if false; // account deletion handled by Cloud Function
+    }
+
+    // ─── Members Index (fast guild membership lookup) ─────────────────────────
+
+    match /members_index/{entryId} {
+      allow read: if isAuthed();
+      allow write: if false; // written only by Cloud Functions
+    }
+
+    // ─── Guilds ────────────────────────────────────────────────────────────────
+
+    match /guilds/{guildId} {
+      // Members can read guild data
+      allow read: if isMember(guildId);
+
+      // Any authenticated user can create a guild
+      allow create: if isAuthed() &&
+        request.resource.data.ownerId == request.auth.uid &&
+        request.resource.data.keys().hasAll(['name', 'description', 'iconUrl', 'ownerId', 'createdAt', 'settings']);
+
+      // Only guild owner or admins can update guild settings
+      allow update: if isMember(guildId) &&
+        (isGuildOwner(guildId) || memberIsAdmin(guildId)) &&
+        // Cannot change ownerId unless via Cloud Function transfer
+        request.resource.data.ownerId == resource.data.ownerId;
+
+      allow delete: if isGuildOwner(guildId);
+
+      // ─── Guild Members ────────────────────────────────────────────────────
+
+      match /members/{memberId} {
+        // All guild members can see each other
+        allow read: if isMember(guildId);
+
+        // Only Cloud Functions write member documents (join/invite/kick flow)
+        // Direct writes disallowed to prevent permission escalation
+        allow create: if false;
+        allow update: if isMember(guildId) &&
+          (isOwner(memberId) || memberHasPermission(guildId, 512)); // 512 = MUTE_MEMBERS
+        allow delete: if isOwner(memberId) || // self-leave
+          memberHasPermission(guildId, 16384); // 16384 = KICK_MEMBERS
+      }
+
+      // ─── Guild Roles ──────────────────────────────────────────────────────
+
+      match /roles/{roleId} {
+        allow read: if isMember(guildId);
+        allow write: if isMember(guildId) &&
+          (isGuildOwner(guildId) || memberHasPermission(guildId, 65536)); // MANAGE_ROLES
+      }
+
+      // ─── Guild Channels ───────────────────────────────────────────────────
+
+      match /channels/{channelId} {
+        allow read: if isMember(guildId);
+        allow create, update, delete: if isMember(guildId) &&
+          (isGuildOwner(guildId) || memberHasPermission(guildId, 4096)); // MANAGE_CHANNELS
+
+        // ─── Messages ───────────────────────────────────────────────────────
+
+        match /messages/{messageId} {
+          // Members with VIEW_CHANNEL permission can read messages (bit 1)
+          allow read: if isMember(guildId);
+
+          // Members can create messages (SEND_MESSAGES = bit 2)
+          allow create: if isMember(guildId) &&
+            request.resource.data.authorId == request.auth.uid &&
+            request.resource.data.content is string &&
+            request.resource.data.content.size() > 0 &&
+            request.resource.data.content.size() <= 2000 &&
+            request.resource.data.keys().hasAll(['content', 'authorId', 'createdAt', 'type']);
+
+          // Only the author can edit their own message content
+          allow update: if isMember(guildId) &&
+            (
+              // Author editing their own content
+              (resource.data.authorId == request.auth.uid &&
+               request.resource.data.diff(resource.data).affectedKeys().hasOnly(['content', 'editedAt']))
+              ||
+              // Moderator managing messages (MANAGE_MESSAGES = bit 8)
+              memberHasPermission(guildId, 8)
+            );
+
+          // Author or moderator can delete
+          allow delete: if isMember(guildId) &&
+            (resource.data.authorId == request.auth.uid ||
+             memberHasPermission(guildId, 8)); // MANAGE_MESSAGES
+        }
+      }
+    }
+
+    // ─── Invites ───────────────────────────────────────────────────────────────
+
+    match /invites/{code} {
+      // Anyone authenticated can read an invite (to preview the guild before joining)
+      allow read: if isAuthed();
+
+      // Guild members can create invites
+      allow create: if isAuthed() &&
+        isMember(request.resource.data.guildId) &&
+        request.resource.data.inviterId == request.auth.uid;
+
+      // Only the inviter or guild admins can delete invites
+      allow delete: if isAuthed() &&
+        (resource.data.inviterId == request.auth.uid ||
+         memberIsAdmin(resource.data.guildId));
+
+      allow update: if false; // use counter incremented by Cloud Function
+    }
+
+    // ─── Direct Messages ───────────────────────────────────────────────────────
+
+    match /directMessages/{dmId} {
+      // Only participants can read the conversation
+      allow read: if isAuthed() &&
+        request.auth.uid in resource.data.participants;
+
+      // Either participant can create a DM conversation
+      allow create: if isAuthed() &&
+        request.auth.uid in request.resource.data.participants &&
+        request.resource.data.participants.size() == 2;
+
+      allow update: if isAuthed() &&
+        request.auth.uid in resource.data.participants;
+
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if isAuthed() &&
+          request.auth.uid in get(/databases/$(database)/documents/directMessages/$(dmId)).data.participants;
+
+        allow create: if isAuthed() &&
+          request.auth.uid in get(/databases/$(database)/documents/directMessages/$(dmId)).data.participants &&
+          request.resource.data.senderId == request.auth.uid;
+
+        // Sender can edit or delete their own messages
+        allow update, delete: if isAuthed() &&
+          resource.data.senderId == request.auth.uid;
+      }
+    }
+  }
+}

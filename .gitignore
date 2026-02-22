@@ -1,0 +1,70 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Build outputs
+dist/
+build/
+out/
+.next/
+.expo/
+web-build/
+
+# Environment — never commit secrets
+.env
+.env.local
+.env.*.local
+*.env
+**/.env
+**/.env.local
+**/.env.*.local
+
+# Service account keys — never commit
+*service_account*.json
+*-adminsdk-*.json
+firebase-credentials.json
+firebase/functions/service-account.json
+
+# Terraform
+terraform/.terraform/
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars
+*.tfvars
+
+# Firebase
+.firebase/
+firebase-debug.log
+firestore-debug.log
+database-debug.log
+
+# Electron
+app/desktop/release/
+app/desktop/dist-electron/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# TypeScript
+*.tsbuildinfo
+
+# Testing
+coverage/
+
+# Expo
+.expo-shared/
