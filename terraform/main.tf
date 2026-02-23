@@ -8,14 +8,13 @@ terraform {
     }
   }
 
-  # Optional: store state in S3 — uncomment and configure
-  # backend "s3" {
-  #   bucket         = "maskord-terraform-state"
-  #   key            = "maskord/website/terraform.tfstate"
-  #   region         = "us-east-1"
-  #   encrypt        = true
-  #   dynamodb_table = "maskord-terraform-locks"
-  # }
+  backend "s3" {
+    bucket         = "maskord-terraform-state"
+    key            = "maskord/website/terraform.tfstate"
+    region         = "us-east-1"
+    encrypt        = true
+    dynamodb_table = "maskord-terraform-locks"
+  }
 }
 
 # Primary region for all resources
