@@ -1,3 +1,28 @@
+# ─── CloudFront Function: Redirect apex → www ────────────────────────────────
+
+resource "aws_cloudfront_function" "apex_redirect" {
+  name    = "maskord-apex-to-www"
+  runtime = "cloudfront-js-2.0"
+  comment = "Redirect maskord.com to www.maskord.com"
+  publish = true
+  code    = <<-EOF
+    function handler(event) {
+      var request = event.request;
+      var host = request.headers.host.value;
+      if (host === "maskord.com") {
+        return {
+          statusCode: 301,
+          statusDescription: "Moved Permanently",
+          headers: {
+            location: { value: "https://www.maskord.com" + request.uri }
+          }
+        };
+      }
+      return request;
+    }
+  EOF
+}
+
 resource "aws_cloudfront_distribution" "website" {
   enabled             = true
   is_ipv6_enabled     = true
@@ -26,6 +51,11 @@ resource "aws_cloudfront_distribution" "website" {
     cache_policy_id            = "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized (AWS managed)
     origin_request_policy_id   = "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf" # CORS-S3Origin (AWS managed)
     response_headers_policy_id = aws_cloudfront_response_headers_policy.website.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.apex_redirect.arn
+    }
   }
 
   # ─── Custom Error Pages (SPA routing — return index.html for 404/403) ───
