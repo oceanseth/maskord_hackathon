@@ -49,7 +49,7 @@ jobs:
           TF_VAR_s3_bucket_name: ${{ vars.S3_BUCKET }}
           TF_VAR_environment:   production
 
-      # Only apply on push to production (not on PRs)
+      # Only apply on push to production or manual dispatch on production (not on PRs)
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/production' && github.event_name == 'push'
+        if: github.ref == 'refs/heads/production' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         run: terraform apply -auto-approve tfplan
