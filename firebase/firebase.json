@@ -6,6 +6,7 @@
   "database": {
     "rules": "database.rules.json"
   },
+  "_comment": "IMPORTANT: Do NOT run 'firebase deploy --only firestore' or 'firebase deploy --only database' or 'firebase deploy --only storage' from this repo. Rules are owned and deployed by oceanseth/masky_auth. Only deploy functions from this repo.",
   "functions": [
     {
       "source": "functions",
