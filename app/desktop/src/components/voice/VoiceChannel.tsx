@@ -1,15 +1,39 @@
-import { useEffect, useRef } from 'react';
-import { useAuth, useGuildMembers, useVoiceChannel } from '@maskord/shared';
-import type { VoiceParticipant } from '@maskord/shared';
+import { useEffect, useRef, useState, useMemo } from 'react';
+import { useAuth, useUserProfiles, useVoiceChannel } from '@maskord/shared';
 
 interface Props {
   guildId: string;
   channelId: string;
 }
 
+// ─── Join sound (Web Audio API — no file needed) ───────────────────────────────
+
+function playJoinSound() {
+  try {
+    const ctx = new AudioContext();
+    [880, 1100].forEach((freq, i) => {
+      const osc  = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0,  ctx.currentTime + i * 0.13);
+      gain.gain.linearRampToValueAtTime(0.18, ctx.currentTime + i * 0.13 + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + i * 0.13 + 0.45);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(ctx.currentTime + i * 0.13);
+      osc.stop(ctx.currentTime + i * 0.13 + 0.5);
+    });
+    setTimeout(() => ctx.close(), 1500);
+  } catch { /* ignore if AudioContext unavailable */ }
+}
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
 export default function VoiceChannel({ guildId, channelId }: Props) {
   const { firebaseUser } = useAuth();
-  const members = useGuildMembers(guildId);
+  const [micError, setMicError] = useState<string | null>(null);
+
   const {
     participants,
     localStream,
@@ -22,17 +46,41 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
     toggleDeafen,
   } = useVoiceChannel(guildId, channelId, firebaseUser?.uid ?? null);
 
-  // Auto-join voice channel when component mounts
+  // Collect all participant IDs (including self) to fetch their profiles
+  const participantIds = participants.map((p) => p.userId);
+  const allIds = useMemo(() => {
+    const ids = [...participantIds];
+    if (firebaseUser?.uid && !ids.includes(firebaseUser.uid)) ids.push(firebaseUser.uid);
+    return ids;
+  }, [participantIds, firebaseUser?.uid]);
+
+  const profiles = useUserProfiles(allIds);
+
+  function getMemberInfo(userId: string) {
+    const p = profiles[userId];
+    return {
+      name:      p?.displayName ?? p?.twitchUsername ?? 'Unknown',
+      avatarUrl: p?.avatarUrl ?? '',
+    };
+  }
+
+  // Auto-join on mount, leave on unmount
   useEffect(() => {
-    join();
+    setMicError(null);
+    join()
+      .then(() => playJoinSound())
+      .catch((err: Error) => {
+        if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+          setMicError('Microphone access denied. Please allow microphone access and try again.');
+        } else {
+          setMicError(`Could not access microphone: ${err.message}`);
+        }
+      });
     return () => { leave(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guildId, channelId]);
 
-  function getMemberName(userId: string) {
-    const member = members.find((m) => m.userId === userId);
-    return member?.nickname ?? 'Unknown';
-  }
+  const selfInfo = firebaseUser ? getMemberInfo(firebaseUser.uid) : null;
 
   return (
     <div className="flex-1 flex flex-col bg-[#0e0e16]">
@@ -49,14 +97,22 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
         )}
       </div>
 
+      {/* Microphone error banner */}
+      {micError && (
+        <div className="mx-4 mt-4 px-4 py-3 bg-red-900/30 border border-red-700/50 rounded-lg text-red-300 text-sm">
+          {micError}
+        </div>
+      )}
+
       {/* Participant grid */}
       <div className="flex-1 p-6">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr max-h-full">
           {/* Local user tile */}
-          {firebaseUser && (
+          {selfInfo && firebaseUser && (
             <ParticipantTile
               userId={firebaseUser.uid}
-              name={getMemberName(firebaseUser.uid)}
+              name={selfInfo.name}
+              avatarUrl={selfInfo.avatarUrl}
               stream={localStream}
               isMuted={isMuted}
               isSelf
@@ -66,15 +122,19 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
           {/* Remote participants */}
           {participants
             .filter((p) => p.userId !== firebaseUser?.uid)
-            .map((p) => (
-              <ParticipantTile
-                key={p.userId}
-                userId={p.userId}
-                name={getMemberName(p.userId)}
-                stream={p.stream}
-                isMuted={p.state.muted}
-              />
-            ))}
+            .map((p) => {
+              const { name, avatarUrl } = getMemberInfo(p.userId);
+              return (
+                <ParticipantTile
+                  key={p.userId}
+                  userId={p.userId}
+                  name={name}
+                  avatarUrl={avatarUrl}
+                  stream={p.stream}
+                  isMuted={p.state.muted}
+                />
+              );
+            })}
         </div>
       </div>
 
@@ -119,14 +179,15 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
 interface TileProps {
   userId: string;
   name: string;
+  avatarUrl: string;
   stream: MediaStream | null | undefined;
   isMuted: boolean;
   isSelf?: boolean;
 }
 
-function ParticipantTile({ name, stream, isMuted, isSelf }: TileProps) {
+function ParticipantTile({ name, avatarUrl, stream, isMuted, isSelf }: TileProps) {
   const audioRef = useRef<HTMLAudioElement>(null);
-  const initials = name.substring(0, 2).toUpperCase();
+  const initials  = name.substring(0, 2).toUpperCase();
 
   useEffect(() => {
     if (audioRef.current && stream && !isSelf) {
@@ -145,8 +206,11 @@ function ParticipantTile({ name, stream, isMuted, isSelf }: TileProps) {
       )}
 
       {/* Avatar */}
-      <div className="w-16 h-16 rounded-full bg-violet-600/30 border-2 border-violet-600/50 flex items-center justify-center">
-        <span className="font-bold text-xl text-violet-300">{initials}</span>
+      <div className="w-16 h-16 rounded-full bg-violet-600/30 border-2 border-violet-600/50 overflow-hidden flex items-center justify-center flex-shrink-0">
+        {avatarUrl
+          ? <img src={avatarUrl} alt={name} className="w-full h-full object-cover" />
+          : <span className="font-bold text-xl text-violet-300">{initials}</span>
+        }
       </div>
 
       <span className="text-sm font-medium text-white truncate px-2 max-w-full">
@@ -171,12 +235,7 @@ function ParticipantTile({ name, stream, isMuted, isSelf }: TileProps) {
 // ─── Voice Button ─────────────────────────────────────────────────────────────
 
 function VoiceButton({
-  children,
-  active,
-  activeColor,
-  inactiveColor,
-  onClick,
-  title,
+  children, active, activeColor, inactiveColor, onClick, title,
 }: {
   children: React.ReactNode;
   active: boolean;

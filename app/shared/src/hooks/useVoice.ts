@@ -299,3 +299,25 @@ export function useVoiceChannel(
     toggleDeafen,
   };
 }
+
+// ─── Guild-wide voice state ────────────────────────────────────────────────────
+// Returns { [channelId]: { [userId]: VoiceState } } for a whole guild.
+// Used by ChannelSidebar to show who's in each voice channel.
+
+export function useGuildVoiceState(
+  guildId: string | null,
+): Record<string, Record<string, VoiceState>> {
+  const [state, setState] = useState<Record<string, Record<string, VoiceState>>>({});
+
+  useEffect(() => {
+    if (!guildId) { setState({}); return; }
+    const rtdb = getFirebaseRtdb();
+    const guildRef = ref(rtdb, `voiceState/${guildId}`);
+    const unsub = onValue(guildRef, (snap) => {
+      setState((snap.val() as Record<string, Record<string, VoiceState>>) ?? {});
+    });
+    return () => unsub();
+  }, [guildId]);
+
+  return state;
+}

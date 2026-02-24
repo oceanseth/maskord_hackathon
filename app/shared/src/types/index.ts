@@ -12,12 +12,15 @@ export interface MaskProfile {
 export interface User {
   id: string;
   displayName: string;
-  email: string;
+  email?: string;
   avatarUrl: string;
-  bio: string;
-  status: UserStatus;
-  createdAt: Timestamp;
-  masks: MaskProfile[];
+  bio?: string;
+  status?: UserStatus;
+  createdAt?: Timestamp;
+  masks?: MaskProfile[];
+  // Twitch-specific fields written by twitchOAuth Cloud Function
+  twitchId?: string;
+  twitchUsername?: string;
 }
 
 export type UserStatus = 'online' | 'idle' | 'dnd' | 'offline';

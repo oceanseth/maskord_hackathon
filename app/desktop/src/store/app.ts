@@ -9,12 +9,15 @@ interface AppState {
   activeChannelType: 'text' | 'voice' | null;
   sidebarCollapsed: boolean;
   memberListOpen: boolean;
+  activeDmPartnerId: string | null;
 
   setCurrentUser:       (user: User | null) => void;
   setActiveGuild:       (guildId: string | null) => void;
   setActiveChannel:     (channelId: string | null, type: 'text' | 'voice' | null) => void;
   toggleSidebar:        () => void;
   toggleMemberList:     () => void;
+  openDm:               (partnerId: string) => void;
+  closeDm:              () => void;
 }
 
 export const useAppStore = create<AppState>()(
@@ -26,12 +29,15 @@ export const useAppStore = create<AppState>()(
       activeChannelType:   null,
       sidebarCollapsed:    false,
       memberListOpen:      true,
+      activeDmPartnerId:   null,
 
       setCurrentUser:   (user) => set({ currentUser: user }),
-      setActiveGuild:   (guildId) => set({ activeGuildId: guildId, activeChannelId: null, activeChannelType: null }),
-      setActiveChannel: (channelId, type) => set({ activeChannelId: channelId, activeChannelType: type }),
+      setActiveGuild:   (guildId) => set({ activeGuildId: guildId, activeChannelId: null, activeChannelType: null, activeDmPartnerId: null }),
+      setActiveChannel: (channelId, type) => set({ activeChannelId: channelId, activeChannelType: type, activeDmPartnerId: null }),
       toggleSidebar:    () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
       toggleMemberList: () => set((s) => ({ memberListOpen: !s.memberListOpen })),
+      openDm:           (partnerId) => set({ activeDmPartnerId: partnerId }),
+      closeDm:          () => set({ activeDmPartnerId: null }),
     }),
     {
       name: 'maskord-app',

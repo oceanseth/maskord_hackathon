@@ -4,11 +4,12 @@ import GuildSidebar from './guild/GuildSidebar';
 import ChannelSidebar from './channel/ChannelSidebar';
 import TextChannel from './channel/TextChannel';
 import VoiceChannel from './voice/VoiceChannel';
+import DmPanel from './voice/DmPanel';
 import WelcomePanel from './ui/WelcomePanel';
 import UserPanel from './ui/UserPanel';
 
 export default function MainLayout() {
-  const { activeGuildId, activeChannelId, activeChannelType } = useAppStore();
+  const { activeGuildId, activeChannelId, activeChannelType, activeDmPartnerId } = useAppStore();
   const { firebaseUser } = useAuth();
 
   return (
@@ -29,14 +30,17 @@ export default function MainLayout() {
 
       {/* Main content panel */}
       <div className="flex-1 flex flex-col min-w-0">
-        {!activeGuildId && <WelcomePanel />}
-        {activeGuildId && activeChannelType === 'text' && activeChannelId && (
+        {activeDmPartnerId && (
+          <DmPanel partnerUid={activeDmPartnerId} />
+        )}
+        {!activeDmPartnerId && !activeGuildId && <WelcomePanel />}
+        {!activeDmPartnerId && activeGuildId && activeChannelType === 'text' && activeChannelId && (
           <TextChannel guildId={activeGuildId} channelId={activeChannelId} />
         )}
-        {activeGuildId && activeChannelType === 'voice' && activeChannelId && (
+        {!activeDmPartnerId && activeGuildId && activeChannelType === 'voice' && activeChannelId && (
           <VoiceChannel guildId={activeGuildId} channelId={activeChannelId} />
         )}
-        {activeGuildId && !activeChannelId && (
+        {!activeDmPartnerId && activeGuildId && !activeChannelId && (
           <WelcomePanel />
         )}
       </div>

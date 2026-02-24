@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, nativeTheme, net, session } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, nativeTheme, net, session, systemPreferences } from 'electron';
 import crypto from 'crypto';
 import path from 'path';
 
@@ -50,7 +50,21 @@ function createWindow() {
   });
 }
 
-app.on('ready', createWindow);
+app.whenReady().then(async () => {
+  // macOS: request microphone access at launch so the system prompt appears before
+  // the user joins a voice channel (avoids a confusing mid-join denial).
+  if (process.platform === 'darwin') {
+    await systemPreferences.askForMediaAccess('microphone');
+  }
+
+  // Allow the renderer to request microphone / camera access via getUserMedia.
+  // Electron's permission type for getUserMedia is 'media'.
+  session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(permission === 'media');
+  });
+
+  createWindow();
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

@@ -21,6 +21,8 @@ import {
   useAuth,
   useGuild,
   useGuildChannels,
+  useGuildVoiceState,
+  useUserProfiles,
   createChannel,
   updateChannel,
   deleteChannel,
@@ -66,8 +68,16 @@ function findContainer(id: string, m: Record<string, string[]>): string | null {
 export default function ChannelSidebar({ guildId }: Props) {
   const { guild }    = useGuild(guildId);
   const channels     = useGuildChannels(guildId);
-  const { activeChannelId, setActiveChannel, setActiveGuild } = useAppStore();
+  const { activeChannelId, setActiveChannel, setActiveGuild, openDm } = useAppStore();
   const { firebaseUser } = useAuth();
+
+  // Voice participant state for this guild (all channels)
+  const guildVoiceState = useGuildVoiceState(guildId);
+  const voiceUserIds = useMemo(
+    () => [...new Set(Object.values(guildVoiceState).flatMap((ch) => Object.keys(ch)))],
+    [guildVoiceState],
+  );
+  const voiceProfiles = useUserProfiles(voiceUserIds);
 
   const [headerMenuOpen,    setHeaderMenuOpen]    = useState(false);
   const [showInvite,        setShowInvite]        = useState(false);
@@ -271,6 +281,14 @@ export default function ChannelSidebar({ guildId }: Props) {
   // ─── Render helpers ──────────────────────────────────────────────────────────
 
   function makeChannelItemProps(ch: Channel) {
+    const voiceUserList = ch.type === 'voice'
+      ? Object.keys(guildVoiceState[ch.id] ?? {}).map((uid) => ({
+          uid,
+          name:      voiceProfiles[uid]?.displayName ?? voiceProfiles[uid]?.twitchUsername ?? 'Unknown',
+          avatarUrl: voiceProfiles[uid]?.avatarUrl ?? '',
+        }))
+      : [];
+
     return {
       channel:        ch,
       active:         activeChannelId === ch.id,
@@ -281,6 +299,10 @@ export default function ChannelSidebar({ guildId }: Props) {
       onRenameSubmit: () => handleRenameSubmit(ch.id),
       onClick:        () => handleChannelClick(ch),
       onContextMenu:  (e: React.MouseEvent) => handleChannelRightClick(e, ch.id),
+      voiceUsers:     voiceUserList,
+      onVoiceUserClick: (uid: string) => {
+        if (firebaseUser && uid !== firebaseUser.uid) openDm(uid);
+      },
     };
   }
 
@@ -431,6 +453,12 @@ export default function ChannelSidebar({ guildId }: Props) {
 
 // ─── Sortable wrappers ────────────────────────────────────────────────────────
 
+interface VoiceUser {
+  uid: string;
+  name: string;
+  avatarUrl: string;
+}
+
 interface ChannelItemBaseProps {
   channel: Channel;
   active: boolean;
@@ -443,6 +471,8 @@ interface ChannelItemBaseProps {
   onContextMenu: (e: React.MouseEvent) => void;
   gripListeners?: Record<string, unknown>;
   faded?: boolean;
+  voiceUsers?: VoiceUser[];
+  onVoiceUserClick?: (uid: string) => void;
 }
 
 function SortableChannelItem({ faded, ...props }: ChannelItemBaseProps & { faded?: boolean }) {
@@ -584,6 +614,7 @@ function CategoryHeader({ name, catId: _catId, showAdd, onAdd, onContextMenu, gr
 function ChannelItem({
   channel, active, renaming, renameValue, renameRef,
   onRenameChange, onRenameSubmit, onClick, onContextMenu, gripListeners,
+  voiceUsers, onVoiceUserClick,
 }: ChannelItemBaseProps) {
   const isVoice = channel.type === 'voice';
 
@@ -606,34 +637,58 @@ function ChannelItem({
   }
 
   return (
-    <div className="group/row flex items-center mx-1 gap-0.5">
-      {gripListeners && (
-        <span
-          {...gripListeners}
-          onClick={(e) => e.stopPropagation()}
-          className="cursor-grab active:cursor-grabbing opacity-0 group-hover/row:opacity-100 flex-shrink-0 p-1 text-[#4b5563] hover:text-[#6b7280]"
-          title="Drag to reorder"
-        >
-          <GripIcon className="w-2 h-3" />
-        </span>
-      )}
-      <button
-        onClick={onClick}
-        onContextMenu={onContextMenu}
-        className={`
-          flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-colors
-          ${active ? 'bg-[#1e1e2e] text-white' : 'text-[#6b7280] hover:bg-[#1e1e2e]/60 hover:text-[#b0b8cc]'}
-        `}
-      >
-        {isVoice ? (
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="flex-shrink-0 opacity-70">
-            <path d="M12 3a9 9 0 0 1 9 9h-2a7 7 0 0 0-7-7V3zm0 4a5 5 0 0 1 5 5h-2a3 3 0 0 0-3-3V7zm-1 5.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5-1.5-.67-1.5-1.5zM3 11h2a7 7 0 0 0 7 7v2a9 9 0 0 1-9-9z" />
-          </svg>
-        ) : (
-          <span className="text-base opacity-70 flex-shrink-0 leading-none">#</span>
+    <div>
+      <div className="group/row flex items-center mx-1 gap-0.5">
+        {gripListeners && (
+          <span
+            {...gripListeners}
+            onClick={(e) => e.stopPropagation()}
+            className="cursor-grab active:cursor-grabbing opacity-0 group-hover/row:opacity-100 flex-shrink-0 p-1 text-[#4b5563] hover:text-[#6b7280]"
+            title="Drag to reorder"
+          >
+            <GripIcon className="w-2 h-3" />
+          </span>
         )}
-        <span className="truncate flex-1 text-left">{channel.name}</span>
-      </button>
+        <button
+          onClick={onClick}
+          onContextMenu={onContextMenu}
+          className={`
+            flex-1 min-w-0 flex items-center gap-1.5 px-2 py-1.5 rounded-md text-sm transition-colors
+            ${active ? 'bg-[#1e1e2e] text-white' : 'text-[#6b7280] hover:bg-[#1e1e2e]/60 hover:text-[#b0b8cc]'}
+          `}
+        >
+          {isVoice ? (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" className="flex-shrink-0 opacity-70">
+              <path d="M12 3a9 9 0 0 1 9 9h-2a7 7 0 0 0-7-7V3zm0 4a5 5 0 0 1 5 5h-2a3 3 0 0 0-3-3V7zm-1 5.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5-1.5-.67-1.5-1.5zM3 11h2a7 7 0 0 0 7 7v2a9 9 0 0 1-9-9z" />
+            </svg>
+          ) : (
+            <span className="text-base opacity-70 flex-shrink-0 leading-none">#</span>
+          )}
+          <span className="truncate flex-1 text-left">{channel.name}</span>
+        </button>
+      </div>
+
+      {/* Voice participants row — shown below voice channels when people are connected */}
+      {isVoice && voiceUsers && voiceUsers.length > 0 && (
+        <div className="ml-8 mb-1 flex flex-col gap-0.5">
+          {voiceUsers.map((u) => (
+            <button
+              key={u.uid}
+              onClick={() => onVoiceUserClick?.(u.uid)}
+              title={`DM ${u.name}`}
+              className="flex items-center gap-2 px-2 py-0.5 rounded-md text-xs text-[#6b7280] hover:text-[#b0b8cc] hover:bg-[#1e1e2e]/60 transition-colors w-full text-left"
+            >
+              <div className="w-5 h-5 rounded-full bg-violet-600/30 overflow-hidden flex-shrink-0 flex items-center justify-center">
+                {u.avatarUrl
+                  ? <img src={u.avatarUrl} alt={u.name} className="w-full h-full object-cover" />
+                  : <span className="text-[8px] font-bold text-violet-300">{u.name.substring(0, 2).toUpperCase()}</span>
+                }
+              </div>
+              <span className="truncate">{u.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

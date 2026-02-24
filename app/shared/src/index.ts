@@ -14,5 +14,6 @@ export { useUserGuilds, useGuild, useGuildMembers, useGuildRoles, useGuildChanne
 export { useMessages, sendMessage, editMessage, deleteMessage, toggleReaction } from './hooks/useMessages';
 export { usePresence, updateActiveContext } from './hooks/usePresence';
 export { useUserProfiles } from './hooks/useUsers';
-export { useVoiceChannel } from './hooks/useVoice';
+export { useVoiceChannel, useGuildVoiceState } from './hooks/useVoice';
 export type { VoiceParticipant } from './hooks/useVoice';
+export { useDmMessages, sendDmMessage, dmChannelId } from './hooks/useDmMessages';
