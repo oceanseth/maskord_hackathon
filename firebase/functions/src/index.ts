@@ -20,7 +20,10 @@ const ALLOWED_REDIRECT_URIS = [
 ];
 
 export const twitchOAuth = onRequest(
-  { cors: false, secrets: [twitchClientSecret] },
+  {
+    cors: ['https://www.maskord.com', 'https://maskord.com', /^http:\/\/localhost(:\d+)?$/],
+    secrets: [twitchClientSecret],
+  },
   async (req, res) => {
     if (req.method !== 'POST') { res.status(405).send('Method Not Allowed'); return; }
 
