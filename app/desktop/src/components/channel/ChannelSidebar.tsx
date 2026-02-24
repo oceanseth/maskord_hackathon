@@ -282,10 +282,12 @@ export default function ChannelSidebar({ guildId }: Props) {
 
   function makeChannelItemProps(ch: Channel) {
     const voiceUserList = ch.type === 'voice'
-      ? Object.keys(guildVoiceState[ch.id] ?? {}).map((uid) => ({
+      ? Object.entries(guildVoiceState[ch.id] ?? {}).map(([uid, state]) => ({
           uid,
           name:      voiceProfiles[uid]?.displayName ?? voiceProfiles[uid]?.twitchUsername ?? 'Unknown',
           avatarUrl: voiceProfiles[uid]?.avatarUrl ?? '',
+          muted:     state.muted ?? false,
+          deafened:  state.deafened ?? false,
         }))
       : [];
 
@@ -457,6 +459,8 @@ interface VoiceUser {
   uid: string;
   name: string;
   avatarUrl: string;
+  muted: boolean;
+  deafened: boolean;
 }
 
 interface ChannelItemBaseProps {
@@ -668,23 +672,60 @@ function ChannelItem({
         </button>
       </div>
 
-      {/* Voice participants row — shown below voice channels when people are connected */}
+      {/* ── Voice participants — Discord-style, listed below the channel row ── */}
       {isVoice && voiceUsers && voiceUsers.length > 0 && (
-        <div className="ml-8 mb-1 flex flex-col gap-0.5">
+        <div className="flex flex-col mb-0.5">
           {voiceUsers.map((u) => (
             <button
               key={u.uid}
               onClick={() => onVoiceUserClick?.(u.uid)}
-              title={`DM ${u.name}`}
-              className="flex items-center gap-2 px-2 py-0.5 rounded-md text-xs text-[#6b7280] hover:text-[#b0b8cc] hover:bg-[#1e1e2e]/60 transition-colors w-full text-left"
+              title={`Message ${u.name}`}
+              className="group/vu flex items-center gap-1.5 mx-1 pl-7 pr-1.5 py-0.5 rounded-md text-xs text-[#5b6477] hover:text-[#b0b8cc] hover:bg-[#1e1e2e]/60 transition-colors"
             >
-              <div className="w-5 h-5 rounded-full bg-violet-600/30 overflow-hidden flex-shrink-0 flex items-center justify-center">
-                {u.avatarUrl
-                  ? <img src={u.avatarUrl} alt={u.name} className="w-full h-full object-cover" />
-                  : <span className="text-[8px] font-bold text-violet-300">{u.name.substring(0, 2).toUpperCase()}</span>
-                }
+              {/* Avatar */}
+              <div className="relative w-5 h-5 flex-shrink-0">
+                <div className="w-5 h-5 rounded-full bg-violet-600/30 overflow-hidden flex items-center justify-center">
+                  {u.avatarUrl
+                    ? <img src={u.avatarUrl} alt={u.name} className="w-full h-full object-cover" />
+                    : <span className="text-[8px] font-bold text-violet-300 leading-none">
+                        {u.name.substring(0, 2).toUpperCase()}
+                      </span>
+                  }
+                </div>
+                {/* Deafened badge on avatar */}
+                {u.deafened && (
+                  <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#0e0e16] flex items-center justify-center">
+                    <svg width="8" height="8" viewBox="0 0 24 24" fill="#ef4444">
+                      <path d="M12 3C6.48 3 2 7.48 2 13v4c0 1.1.9 2 2 2h1c1.1 0 2-.9 2-2v-3c0-1.1-.9-2-2-2H4v-1c0-4.42 3.58-8 8-8s8 3.58 8 8v1h-1c-1.1 0-2 .9-2 2v3c0 1.1.9 2 2 2h1c1.1 0 2-.9 2-2v-4c0-5.52-4.48-10-10-10zm-1 9v6h2v-6h-2z" />
+                    </svg>
+                  </div>
+                )}
               </div>
-              <span className="truncate">{u.name}</span>
+
+              {/* Name */}
+              <span className="flex-1 truncate text-left leading-none py-0.5">
+                {u.name}
+              </span>
+
+              {/* Status icons (right side) */}
+              <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover/vu:opacity-100 transition-opacity">
+                {u.muted ? (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="#ef4444">
+                    <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z" />
+                  </svg>
+                ) : (
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z" />
+                  </svg>
+                )}
+              </div>
+
+              {/* Always-visible muted indicator (not just on hover) */}
+              {u.muted && (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="#ef4444" className="flex-shrink-0 -ml-0.5 group-hover/vu:hidden">
+                  <path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z" />
+                </svg>
+              )}
             </button>
           ))}
         </div>
