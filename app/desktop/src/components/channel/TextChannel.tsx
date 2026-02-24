@@ -1,5 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
-import { useAuth, useGuildMembers, useMessages, sendMessage, deleteMessage, editMessage } from '@maskord/shared';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useAuth, useGuildMembers, useGuildChannels, useMessages, useUserProfiles, sendMessage, deleteMessage, editMessage } from '@maskord/shared';
 import type { Message } from '@maskord/shared';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { formatDistanceToNow } from 'date-fns';
@@ -11,6 +11,8 @@ interface Props {
 
 export default function TextChannel({ guildId, channelId }: Props) {
   const { firebaseUser } = useAuth();
+  const channels = useGuildChannels(guildId);
+  const channelName = channels.find((c) => c.id === channelId)?.name ?? '';
   const { messages, loading, hasMore, loadMore } = useMessages(guildId, channelId);
   const members = useGuildMembers(guildId);
   const [input, setInput] = useState('');
@@ -19,6 +21,13 @@ export default function TextChannel({ guildId, channelId }: Props) {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
+  // Collect unique author IDs so we can fetch their profiles
+  const authorIds = useMemo(
+    () => [...new Set(messages.map((m) => m.authorId))],
+    [messages],
+  );
+  const userProfiles = useUserProfiles(authorIds);
+
   // Auto-scroll to bottom on new messages
   useEffect(() => {
     if (messages.length > 0) {
@@ -26,12 +35,15 @@ export default function TextChannel({ guildId, channelId }: Props) {
     }
   }, [messages.length]);
 
-  const getMemberName = useCallback(
+  const getMemberInfo = useCallback(
     (userId: string) => {
       const member = members.find((m) => m.userId === userId);
-      return member?.nickname ?? 'Unknown';
+      const profile = userProfiles[userId];
+      const name = member?.nickname ?? profile?.displayName ?? userId.split(':').pop() ?? 'Unknown';
+      const avatarUrl = profile?.avatarUrl ?? '';
+      return { name, avatarUrl };
     },
-    [members],
+    [members, userProfiles],
   );
 
   async function handleSend(e: React.FormEvent) {
@@ -62,7 +74,7 @@ export default function TextChannel({ guildId, channelId }: Props) {
         {/* Channel header */}
         <div className="h-12 flex items-center gap-2 px-4 border-b border-[#1e1e2e] flex-shrink-0">
           <span className="text-[#6b7280] text-lg">#</span>
-          <span className="font-semibold text-white text-sm">channel</span>
+          <span className="font-semibold text-white text-sm">{channelName}</span>
         </div>
 
         {/* Messages */}
@@ -82,7 +94,7 @@ export default function TextChannel({ guildId, channelId }: Props) {
                   key={msg.id}
                   message={msg}
                   currentUserId={firebaseUser?.uid}
-                  getMemberName={getMemberName}
+                  getMemberInfo={getMemberInfo}
                   isEditing={editingId === msg.id}
                   editContent={editContent}
                   onStartEdit={() => { setEditingId(msg.id); setEditContent(msg.content); }}
@@ -139,7 +151,7 @@ export default function TextChannel({ guildId, channelId }: Props) {
 interface MessageRowProps {
   message: Message;
   currentUserId?: string;
-  getMemberName: (uid: string) => string;
+  getMemberInfo: (uid: string) => { name: string; avatarUrl: string };
   isEditing: boolean;
   editContent: string;
   onStartEdit: () => void;
@@ -152,7 +164,7 @@ interface MessageRowProps {
 function MessageRow({
   message,
   currentUserId,
-  getMemberName,
+  getMemberInfo,
   isEditing,
   editContent,
   onStartEdit,
@@ -162,7 +174,7 @@ function MessageRow({
   onDelete,
 }: MessageRowProps) {
   const isOwn = message.authorId === currentUserId;
-  const name = getMemberName(message.authorId);
+  const { name, avatarUrl } = getMemberInfo(message.authorId);
   const initials = name.substring(0, 2).toUpperCase();
   const time = message.createdAt
     ? formatDistanceToNow(message.createdAt.toDate(), { addSuffix: true })
@@ -181,7 +193,10 @@ function MessageRow({
     <div className="group flex gap-3 px-4 py-1 hover:bg-[#1a1a28]/40 transition-colors">
       {/* Avatar */}
       <div className="w-10 h-10 rounded-full bg-violet-600/30 flex items-center justify-center flex-shrink-0 mt-0.5 overflow-hidden">
-        <span className="text-xs font-bold text-violet-300">{initials}</span>
+        {avatarUrl
+          ? <img src={avatarUrl} alt={name} className="w-full h-full object-cover" />
+          : <span className="text-xs font-bold text-violet-300">{initials}</span>
+        }
       </div>
 
       {/* Content */}

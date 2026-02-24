@@ -164,7 +164,7 @@ export interface VoiceState {
 // ─── Voice Signaling (Realtime DB) ───────────────────────────────────────────
 
 export interface RTCSignalDescription {
-  type: string;
+  type: RTCSdpType;
   sdp: string;
 }
 

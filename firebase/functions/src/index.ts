@@ -1,10 +1,211 @@
 import * as admin from 'firebase-admin';
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { onValueDeleted } from 'firebase-functions/v2/database';
+import { defineSecret } from 'firebase-functions/params';
 
 admin.initializeApp();
 const db = admin.firestore();
+
+// ─── Twitch OAuth ─────────────────────────────────────────────────────────────
+
+const twitchClientSecret = defineSecret('TWITCH_CLIENT_SECRET');
+
+const TWITCH_CLIENT_ID = 'sgb17aslo6gesnetuqfnf6qql6jrae';
+
+const ALLOWED_REDIRECT_URIS = [
+  'http://localhost:2468',           // Electron desktop app
+  'https://www.maskord.com/app',     // Web app (production)
+  'https://maskord.com/app',         // Web app (apex — redirects to www)
+];
+
+export const twitchOAuth = onRequest(
+  { cors: false, secrets: [twitchClientSecret] },
+  async (req, res) => {
+    if (req.method !== 'POST') { res.status(405).send('Method Not Allowed'); return; }
+
+    const { code, redirectUri = 'http://localhost:2468' } = req.body as { code?: string; redirectUri?: string };
+    if (!code) { res.status(400).json({ error: 'missing code' }); return; }
+    if (!ALLOWED_REDIRECT_URIS.includes(redirectUri)) {
+      res.status(400).json({ error: 'invalid redirect URI' });
+      return;
+    }
+
+    const clientId     = TWITCH_CLIENT_ID;
+    const clientSecret = twitchClientSecret.value();
+
+    // Exchange authorization code for access token
+    const tokenRes = await fetch('https://id.twitch.tv/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id:     clientId,
+        client_secret: clientSecret,
+        code,
+        grant_type:    'authorization_code',
+        redirect_uri:  redirectUri,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const err = await tokenRes.text();
+      console.error('Twitch token exchange failed:', err);
+      res.status(502).json({ error: 'token exchange failed' });
+      return;
+    }
+
+    const { access_token: accessToken } = await tokenRes.json() as { access_token: string };
+
+    // Fetch Twitch user info
+    const userRes = await fetch('https://api.twitch.tv/helix/users', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Client-Id':   clientId,
+      },
+    });
+
+    if (!userRes.ok) { res.status(502).json({ error: 'failed to fetch twitch user' }); return; }
+
+    const { data: [twitchUser] } = await userRes.json() as {
+      data: Array<{ id: string; login: string; display_name: string; profile_image_url: string; email?: string }>;
+    };
+
+    const uid = `twitch:${twitchUser.id}`;
+
+    // Create Firebase Auth user if new
+    try {
+      await admin.auth().getUser(uid);
+    } catch {
+      await admin.auth().createUser({
+        uid,
+        displayName: twitchUser.display_name,
+        photoURL:    twitchUser.profile_image_url,
+        ...(twitchUser.email ? { email: twitchUser.email } : {}),
+      });
+    }
+
+    // Upsert Firestore user doc (same schema as maskord users collection)
+    await db.collection('users').doc(uid).set({
+      displayName:    twitchUser.display_name,
+      avatarUrl:      twitchUser.profile_image_url,
+      twitchId:       twitchUser.id,
+      twitchUsername: twitchUser.login,
+      ...(twitchUser.email ? { email: twitchUser.email } : {}),
+    }, { merge: true });
+
+    const customToken = await admin.auth().createCustomToken(uid, {
+      provider:   'twitch',
+      twitchId:   twitchUser.id,
+    });
+
+    res.json({ firebaseToken: customToken, twitchId: twitchUser.id, displayName: twitchUser.display_name });
+  },
+);
+
+// ─── Create Guild ─────────────────────────────────────────────────────────────
+
+// DEFAULT_PERMISSIONS = VIEW_CHANNEL|SEND_MESSAGES|READ_MESSAGE_HISTORY|EMBED_LINKS|ATTACH_FILES|ADD_REACTIONS|CONNECT|SPEAK
+const DEFAULT_PERMISSIONS = 1 | 2 | 4 | 16 | 32 | 64 | 128 | 256; // 503
+
+export const createGuildFn = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+  const { name } = request.data as { name: string };
+  if (!name?.trim()) throw new HttpsError('invalid-argument', 'name required');
+
+  const ownerId = request.auth.uid;
+
+  // Server-side idempotency: if user already has a personal guild, return it.
+  const userSnap = await db.doc(`users/${ownerId}`).get();
+  const existingGuildId = userSnap.data()?.personalGuildId as string | undefined;
+  if (existingGuildId) {
+    const guildSnap = await db.doc(`guilds/${existingGuildId}`).get();
+    if (guildSnap.exists) return { guildId: existingGuildId };
+    // Guild was deleted — clear the stale field and fall through to recreate
+    await db.doc(`users/${ownerId}`).update({ personalGuildId: admin.firestore.FieldValue.delete() });
+  }
+
+  const batch = db.batch();
+
+  // Create guild
+  const guildRef = db.collection('guilds').doc();
+  batch.set(guildRef, {
+    name: name.trim(),
+    description: '',
+    iconUrl: '',
+    ownerId,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    vanityCode: null,
+    settings: {
+      defaultNotifications: 'all',
+      explicitContentFilter: 'disabled',
+      verificationLevel: 'none',
+    },
+  });
+
+  const guildId = guildRef.id;
+
+  // Create @everyone role
+  const everyoneRoleRef = db.collection(`guilds/${guildId}/roles`).doc();
+  batch.set(everyoneRoleRef, {
+    name: '@everyone',
+    color: '#99AAB5',
+    permissions: DEFAULT_PERMISSIONS,
+    position: 0,
+    hoist: false,
+    mentionable: false,
+  });
+
+  // Add owner as member
+  batch.set(db.doc(`guilds/${guildId}/members/${ownerId}`), {
+    nickname: null,
+    roles: [everyoneRoleRef.id],
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+    muted: false,
+    deafened: false,
+    pending: false,
+  });
+
+  // Mirror in members_index
+  batch.set(db.doc(`members_index/${guildId}_${ownerId}`), {
+    guildId,
+    userId: ownerId,
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Default text channel
+  const textChannelRef = db.collection(`guilds/${guildId}/channels`).doc();
+  batch.set(textChannelRef, {
+    name: 'general',
+    type: 'text',
+    position: 0,
+    topic: 'General discussion',
+    slowmode: 0,
+    nsfw: false,
+    parentId: null,
+    permissionOverwrites: {},
+  });
+
+  // Default voice channel
+  const voiceChannelRef = db.collection(`guilds/${guildId}/channels`).doc();
+  batch.set(voiceChannelRef, {
+    name: 'General',
+    type: 'voice',
+    position: 1,
+    topic: null,
+    slowmode: 0,
+    nsfw: false,
+    parentId: null,
+    permissionOverwrites: {},
+  });
+
+  // Record personalGuildId on user doc so future calls return early
+  batch.set(db.doc(`users/${ownerId}`), { personalGuildId: guildId }, { merge: true });
+
+  await batch.commit();
+
+  return { guildId };
+});
 
 // ─── Join Guild via Invite ────────────────────────────────────────────────────
 

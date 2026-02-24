@@ -3,21 +3,51 @@
 resource "aws_cloudfront_function" "apex_redirect" {
   name    = "maskord-apex-to-www"
   runtime = "cloudfront-js-2.0"
-  comment = "Redirect maskord.com to www.maskord.com"
+  comment = "Apex redirect + /app SPA routing"
   publish = true
   code    = <<-EOF
     function handler(event) {
       var request = event.request;
-      var host = request.headers.host.value;
+      var host    = request.headers.host.value;
+      var uri     = request.uri;
+
+      // ── 1. Apex → www redirect (preserve query string for OAuth callbacks) ──
       if (host === "maskord.com") {
+        var qs = "";
+        var q  = request.querystring;
+        if (q) {
+          var parts = [];
+          for (var k in q) {
+            var v = q[k];
+            var vals = v.multiValue || [v];
+            for (var i = 0; i < vals.length; i++) {
+              parts.push(k + "=" + vals[i].value);
+            }
+          }
+          if (parts.length) qs = "?" + parts.join("&");
+        }
         return {
           statusCode: 301,
           statusDescription: "Moved Permanently",
-          headers: {
-            location: { value: "https://www.maskord.com" + request.uri }
-          }
+          headers: { location: { value: "https://www.maskord.com" + uri + qs } }
         };
       }
+
+      // ── 2. /app SPA routing — serve /app/index.html for any path that
+      //       doesn't look like a direct file (no extension after last slash) ──
+      if (uri === "/app" || uri === "/app/") {
+        request.uri = "/app/index.html";
+        return request;
+      }
+      if (uri.startsWith("/app/")) {
+        var lastSlash = uri.lastIndexOf("/");
+        var basename  = uri.substring(lastSlash + 1);
+        if (basename.indexOf(".") === -1) {
+          request.uri = "/app/index.html";
+          return request;
+        }
+      }
+
       return request;
     }
   EOF

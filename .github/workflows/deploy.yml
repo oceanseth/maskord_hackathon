@@ -6,6 +6,9 @@ on:
       - production
     paths:
       - 'www/**'
+      - 'app/desktop/src/**'
+      - 'app/desktop/vite.web.config.ts'
+      - 'app/shared/src/**'
       - 'scripts/deploy.sh'
       - '.github/workflows/deploy.yml'
 
@@ -57,8 +60,9 @@ jobs:
 
       - name: Post deploy summary
         run: |
-          echo "### ✅ Maskord Website Deployed" >> $GITHUB_STEP_SUMMARY
-          echo "- **URL**: https://maskord.com" >> $GITHUB_STEP_SUMMARY
+          echo "### ✅ Maskord Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Landing page**: https://maskord.com" >> $GITHUB_STEP_SUMMARY
+          echo "- **Web app**: https://maskord.com/app" >> $GITHUB_STEP_SUMMARY
           echo "- **Bucket**: \`${{ vars.S3_BUCKET }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **CloudFront**: \`${{ vars.CF_DISTRIBUTION_ID }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY

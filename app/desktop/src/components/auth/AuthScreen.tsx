@@ -1,14 +1,93 @@
-import { useState } from 'react';
-import { useAuth } from '@maskord/shared';
+import { useState, useEffect } from 'react';
+import { signInWithCustomToken } from 'firebase/auth';
+import { useAuth, getFirebaseAuth } from '@maskord/shared';
+
+const TWITCH_CLIENT_ID  = 'sgb17aslo6gesnetuqfnf6qql6jrae';
+const TWITCH_OAUTH_URL  = 'https://us-central1-maskydotnet.cloudfunctions.net/twitchOAuth';
+// Web redirect URI — Twitch sends the user back here after authorising.
+// Must be registered in the Twitch developer console AND allowed by the Cloud Function.
+const WEB_REDIRECT_URI  = 'https://www.maskord.com/app';
+
+const isElectron = typeof window !== 'undefined' && 'electron' in window;
 
 type Mode = 'login' | 'register';
 
 export default function AuthScreen() {
-  const [mode, setMode] = useState<Mode>('login');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [mode, setMode]             = useState<Mode>('login');
+  const [email, setEmail]           = useState('');
+  const [password, setPassword]     = useState('');
   const [displayName, setDisplayName] = useState('');
   const { signIn, signInWithGoogle, register, loading, error } = useAuth();
+  const [twitchError, setTwitchError] = useState<string | null>(null);
+  const [twitchLoading, setTwitchLoading] = useState(false);
+
+  // ─── Web OAuth callback handler ────────────────────────────────────────────
+  // When Twitch redirects back to maskord.com/app?code=xxx&state=yyy,
+  // this effect fires on mount and exchanges the code for a Firebase token.
+  useEffect(() => {
+    if (isElectron) return;
+
+    const params = new URLSearchParams(window.location.search);
+    const code   = params.get('code');
+    const state  = params.get('state');
+    if (!code || !state) return;
+
+    const savedState = sessionStorage.getItem('twitch_oauth_state');
+    // Clean the URL immediately so a refresh doesn't re-trigger
+    window.history.replaceState({}, '', window.location.pathname);
+
+    if (state !== savedState) {
+      setTwitchError('OAuth state mismatch — please try again.');
+      return;
+    }
+    sessionStorage.removeItem('twitch_oauth_state');
+
+    setTwitchLoading(true);
+    fetch(TWITCH_OAUTH_URL, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ code, redirectUri: WEB_REDIRECT_URI }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error(`Sign-in failed (${res.status})`);
+        return res.json() as Promise<{ firebaseToken: string }>;
+      })
+      .then(({ firebaseToken }) => signInWithCustomToken(getFirebaseAuth(), firebaseToken))
+      .catch((e: unknown) => setTwitchError(e instanceof Error ? e.message : 'Twitch sign in failed'))
+      .finally(() => setTwitchLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // ─── Twitch sign-in initiator ──────────────────────────────────────────────
+
+  async function handleTwitchSignIn() {
+    setTwitchError(null);
+
+    if (isElectron) {
+      // Electron: delegate to the preload IPC handler (opens a popup window)
+      try {
+        const { firebaseToken } = await (window as unknown as {
+          electron: { signInWithTwitch: () => Promise<{ firebaseToken: string }> };
+        }).electron.signInWithTwitch();
+        await signInWithCustomToken(getFirebaseAuth(), firebaseToken);
+      } catch (e: unknown) {
+        setTwitchError(e instanceof Error ? e.message : 'Twitch sign in failed');
+      }
+      return;
+    }
+
+    // Web: redirect to Twitch, which redirects back to WEB_REDIRECT_URI?code=...
+    const state = crypto.randomUUID();
+    sessionStorage.setItem('twitch_oauth_state', state);
+
+    const authUrl = new URL('https://id.twitch.tv/oauth2/authorize');
+    authUrl.searchParams.set('client_id',     TWITCH_CLIENT_ID);
+    authUrl.searchParams.set('redirect_uri',  WEB_REDIRECT_URI);
+    authUrl.searchParams.set('response_type', 'code');
+    authUrl.searchParams.set('scope',         'user:read:email');
+    authUrl.searchParams.set('state',         state);
+    window.location.href = authUrl.toString();
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -18,6 +97,8 @@ export default function AuthScreen() {
       await register(email, password, displayName);
     }
   }
+
+  const anyLoading = loading || twitchLoading;
 
   return (
     <div className="h-screen w-screen flex items-center justify-center bg-[#0a0a0f] relative overflow-hidden">
@@ -33,103 +114,129 @@ export default function AuthScreen() {
             <MaskIcon />
           </div>
           <h1 className="font-display font-bold text-2xl text-white">
-            {mode === 'login' ? 'Welcome back' : 'Create account'}
+            {twitchLoading ? 'Signing in…' : mode === 'login' ? 'Welcome back' : 'Create account'}
           </h1>
           <p className="text-[#6b7280] text-sm mt-1">
-            {mode === 'login'
+            {twitchLoading
+              ? 'Exchanging Twitch token…'
+              : mode === 'login'
               ? 'Sign in to Maskord'
               : 'Start wearing your masks'}
           </p>
         </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="space-y-3">
-          {mode === 'register' && (
-            <div>
-              <label className="block text-xs font-medium text-[#94a3b8] mb-1.5 uppercase tracking-wide">
-                Display Name
-              </label>
-              <input
-                type="text"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                required
-                className="w-full px-3 py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none transition-colors placeholder:text-[#6b7280]"
-                placeholder="Your mask name"
-              />
+        {twitchLoading ? (
+          <div className="flex justify-center py-8">
+            <div className="w-8 h-8 rounded-full border-2 border-violet-600 border-t-transparent animate-spin" />
+          </div>
+        ) : (
+          <>
+            {/* Form */}
+            <form onSubmit={handleSubmit} className="space-y-3">
+              {mode === 'register' && (
+                <div>
+                  <label className="block text-xs font-medium text-[#94a3b8] mb-1.5 uppercase tracking-wide">
+                    Display Name
+                  </label>
+                  <input
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    required
+                    className="w-full px-3 py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none transition-colors placeholder:text-[#6b7280]"
+                    placeholder="Your mask name"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-medium text-[#94a3b8] mb-1.5 uppercase tracking-wide">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                  className="w-full px-3 py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none transition-colors placeholder:text-[#6b7280]"
+                  placeholder="you@example.com"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-[#94a3b8] mb-1.5 uppercase tracking-wide">
+                  Password
+                </label>
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="w-full px-3 py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none transition-colors placeholder:text-[#6b7280]"
+                  placeholder="••••••••"
+                />
+              </div>
+
+              {error && (
+                <p className="text-red-400 text-xs bg-red-900/20 border border-red-800/30 rounded-lg px-3 py-2">
+                  {error}
+                </p>
+              )}
+
+              <button
+                type="submit"
+                disabled={anyLoading}
+                className="w-full py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors mt-1"
+              >
+                {anyLoading ? 'Loading...' : mode === 'login' ? 'Sign In' : 'Create Account'}
+              </button>
+            </form>
+
+            {/* Divider */}
+            <div className="flex items-center gap-3 my-4">
+              <div className="flex-1 h-px bg-[#1e1e2e]" />
+              <span className="text-xs text-[#6b7280]">or</span>
+              <div className="flex-1 h-px bg-[#1e1e2e]" />
             </div>
-          )}
 
-          <div>
-            <label className="block text-xs font-medium text-[#94a3b8] mb-1.5 uppercase tracking-wide">
-              Email
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              className="w-full px-3 py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none transition-colors placeholder:text-[#6b7280]"
-              placeholder="you@example.com"
-            />
-          </div>
+            {/* Google sign in */}
+            <button
+              onClick={() => signInWithGoogle()}
+              disabled={anyLoading}
+              className="w-full py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] hover:border-violet-700/50 disabled:opacity-50 text-[#e2e8f0] font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <GoogleIcon />
+              Continue with Google
+            </button>
 
-          <div>
-            <label className="block text-xs font-medium text-[#94a3b8] mb-1.5 uppercase tracking-wide">
-              Password
-            </label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="w-full px-3 py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none transition-colors placeholder:text-[#6b7280]"
-              placeholder="••••••••"
-            />
-          </div>
+            {/* Twitch sign in */}
+            <button
+              onClick={handleTwitchSignIn}
+              disabled={anyLoading}
+              className="w-full mt-2 py-2.5 rounded-lg bg-[#9146ff]/10 border border-[#9146ff]/30 hover:bg-[#9146ff]/20 hover:border-[#9146ff]/60 disabled:opacity-50 text-[#bf94ff] font-medium text-sm transition-colors flex items-center justify-center gap-2"
+            >
+              <TwitchIcon />
+              Continue with Twitch
+            </button>
 
-          {error && (
-            <p className="text-red-400 text-xs bg-red-900/20 border border-red-800/30 rounded-lg px-3 py-2">
-              {error}
+            {twitchError && (
+              <p className="text-red-400 text-xs bg-red-900/20 border border-red-800/30 rounded-lg px-3 py-2 mt-2">
+                {twitchError}
+              </p>
+            )}
+
+            {/* Toggle mode */}
+            <p className="text-center text-sm text-[#6b7280] mt-6">
+              {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
+              <button
+                onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+                className="text-violet-400 hover:text-violet-300 font-medium transition-colors"
+              >
+                {mode === 'login' ? 'Register' : 'Sign In'}
+              </button>
             </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-sm transition-colors mt-1"
-          >
-            {loading ? 'Loading...' : mode === 'login' ? 'Sign In' : 'Create Account'}
-          </button>
-        </form>
-
-        {/* Divider */}
-        <div className="flex items-center gap-3 my-4">
-          <div className="flex-1 h-px bg-[#1e1e2e]" />
-          <span className="text-xs text-[#6b7280]">or</span>
-          <div className="flex-1 h-px bg-[#1e1e2e]" />
-        </div>
-
-        {/* Google sign in */}
-        <button
-          onClick={() => signInWithGoogle()}
-          disabled={loading}
-          className="w-full py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] hover:border-violet-700/50 disabled:opacity-50 text-[#e2e8f0] font-medium text-sm transition-colors flex items-center justify-center gap-2"
-        >
-          <GoogleIcon />
-          Continue with Google
-        </button>
-
-        {/* Toggle mode */}
-        <p className="text-center text-sm text-[#6b7280] mt-6">
-          {mode === 'login' ? "Don't have an account? " : 'Already have an account? '}
-          <button
-            onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
-            className="text-violet-400 hover:text-violet-300 font-medium transition-colors"
-          >
-            {mode === 'login' ? 'Register' : 'Sign In'}
-          </button>
-        </p>
+          </>
+        )}
       </div>
     </div>
   );
@@ -144,6 +251,14 @@ function MaskIcon() {
       />
       <circle cx="11" cy="13" r="2" fill="white" opacity="0.9" />
       <circle cx="21" cy="13" r="2" fill="white" opacity="0.9" />
+    </svg>
+  );
+}
+
+function TwitchIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="#9146ff">
+      <path d="M11.571 4.714h1.715v5.143H11.57zm4.715 0H18v5.143h-1.714zM6 0L1.714 4.286v15.428h5.143V24l4.286-4.286h3.428L22.286 12V0zm14.571 11.143l-3.428 3.428h-3.429l-3 3v-3H6.857V1.714h13.714z" />
     </svg>
   );
 }

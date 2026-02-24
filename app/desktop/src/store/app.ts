@@ -36,10 +36,11 @@ export const useAppStore = create<AppState>()(
     {
       name: 'maskord-app',
       partialize: (s) => ({
-        activeGuildId:   s.activeGuildId,
-        activeChannelId: s.activeChannelId,
-        sidebarCollapsed: s.sidebarCollapsed,
-        memberListOpen:  s.memberListOpen,
+        activeGuildId:      s.activeGuildId,
+        activeChannelId:    s.activeChannelId,
+        activeChannelType:  s.activeChannelType,
+        sidebarCollapsed:   s.sidebarCollapsed,
+        memberListOpen:     s.memberListOpen,
       }),
     },
   ),

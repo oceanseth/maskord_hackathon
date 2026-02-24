@@ -20,6 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WWW_DIR="${REPO_ROOT}/www"
 DIST_DIR="${WWW_DIR}/dist"
+DESKTOP_DIR="${REPO_ROOT}/app/desktop"
+WEB_DIST_DIR="${DESKTOP_DIR}/dist-web"
 
 S3_BUCKET="${S3_BUCKET:-maskord-website-prod}"
 CF_DISTRIBUTION_ID="${CF_DISTRIBUTION_ID:-}"
@@ -40,38 +42,70 @@ echo "   CloudFront: ${CF_DISTRIBUTION_ID}"
 echo "   Region: ${AWS_REGION}"
 echo ""
 
-# ─── Step 1: Install www dependencies ────────────────────────────────────────
+# ─── Step 1: Install dependencies ────────────────────────────────────────────
 
-echo "📦 Installing dependencies..."
+echo "📦 Installing dependencies (www)..."
 cd "${WWW_DIR}"
 npm install --silent
 
-# ─── Step 2: Build ───────────────────────────────────────────────────────────
+echo "📦 Installing dependencies (app/desktop)..."
+cd "${DESKTOP_DIR}"
+npm install --silent
 
-echo "🔨 Building Vite app..."
+# ─── Step 2: Build www (landing page) ────────────────────────────────────────
+
+echo "🔨 Building landing page..."
+cd "${WWW_DIR}"
 npm run build
 
 if [[ ! -d "${DIST_DIR}" ]]; then
-  echo "❌ Build failed — dist/ directory not found"
+  echo "❌ Landing page build failed — dist/ directory not found"
   exit 1
 fi
 
-echo "✅ Build complete ($(du -sh "${DIST_DIR}" | cut -f1) total)"
+echo "✅ Landing page built ($(du -sh "${DIST_DIR}" | cut -f1) total)"
 
-# ─── Step 3: Sync to S3 ──────────────────────────────────────────────────────
+# ─── Step 3: Build web app ────────────────────────────────────────────────────
+
+echo "🔨 Building web app..."
+cd "${DESKTOP_DIR}"
+npm run build:web
+
+if [[ ! -d "${WEB_DIST_DIR}" ]]; then
+  echo "❌ Web app build failed — dist-web/ directory not found"
+  exit 1
+fi
+
+echo "✅ Web app built ($(du -sh "${WEB_DIST_DIR}" | cut -f1) total)"
+
+# ─── Step 4: Sync to S3 ──────────────────────────────────────────────────────
 
 echo ""
 echo "☁️  Syncing to S3..."
 
-# Sync non-HTML assets with long cache (1 year) — Vite includes content hashes in filenames
+# Landing page — hashed assets get long cache; HTML gets short cache
 aws s3 sync "${DIST_DIR}/assets" "s3://${S3_BUCKET}/assets" \
   --delete \
   --region "${AWS_REGION}" \
   --cache-control "public, max-age=31536000, immutable" \
   --quiet
 
-# Sync HTML and other files with short cache (5 minutes)
 aws s3 sync "${DIST_DIR}" "s3://${S3_BUCKET}" \
+  --delete \
+  --region "${AWS_REGION}" \
+  --exclude "assets/*" \
+  --exclude "app/*" \
+  --cache-control "public, max-age=300, must-revalidate" \
+  --quiet
+
+# Web app — sync under /app/ prefix
+aws s3 sync "${WEB_DIST_DIR}/assets" "s3://${S3_BUCKET}/app/assets" \
+  --delete \
+  --region "${AWS_REGION}" \
+  --cache-control "public, max-age=31536000, immutable" \
+  --quiet
+
+aws s3 sync "${WEB_DIST_DIR}" "s3://${S3_BUCKET}/app" \
   --delete \
   --region "${AWS_REGION}" \
   --exclude "assets/*" \
@@ -98,5 +132,6 @@ echo "   (Takes 1-5 minutes to propagate globally)"
 
 echo ""
 echo "🎉 Deploy complete!"
-echo "   https://maskord.com"
+echo "   Landing page: https://maskord.com"
+echo "   Web app:      https://maskord.com/app"
 echo ""

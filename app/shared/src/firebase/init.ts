@@ -3,6 +3,7 @@ import { getAuth, type Auth } from 'firebase/auth';
 import { getFirestore, type Firestore } from 'firebase/firestore';
 import { getDatabase, type Database } from 'firebase/database';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
+import { getFunctions, type Functions } from 'firebase/functions';
 import { firebaseConfig } from './config';
 
 let app: FirebaseApp;
@@ -10,6 +11,7 @@ let auth: Auth;
 let db: Firestore;
 let rtdb: Database;
 let storage: FirebaseStorage;
+let functions: Functions;
 
 export function initFirebase() {
   app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
@@ -17,7 +19,8 @@ export function initFirebase() {
   db = getFirestore(app);
   rtdb = getDatabase(app);
   storage = getStorage(app);
-  return { app, auth, db, rtdb, storage };
+  functions = getFunctions(app);
+  return { app, auth, db, rtdb, storage, functions };
 }
 
 export function getFirebaseApp() {
@@ -43,4 +46,9 @@ export function getFirebaseRtdb() {
 export function getFirebaseStorage() {
   if (!storage) initFirebase();
   return storage;
+}
+
+export function getFirebaseFunctions() {
+  if (!functions) initFirebase();
+  return functions;
 }
