@@ -39,6 +39,7 @@ terraform/terraform.tfvars
 firebase-debug.log
 firestore-debug.log
 database-debug.log
+firebase/functions/lib/
 
 # Electron
 app/desktop/release/
