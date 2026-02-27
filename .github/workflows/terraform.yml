@@ -1,14 +1,6 @@
 name: Terraform
 
 on:
-  push:
-    branches:
-      - production
-    paths:
-      - 'terraform/**'
-  pull_request:
-    paths:
-      - 'terraform/**'
   workflow_dispatch:
 
 jobs:
@@ -45,9 +37,11 @@ jobs:
       - name: Terraform Plan
         run: terraform plan -no-color -out=tfplan
         env:
-          TF_VAR_domain_name:   maskord.com
-          TF_VAR_s3_bucket_name: ${{ vars.S3_BUCKET }}
-          TF_VAR_environment:   production
+          TF_VAR_domain_name:        maskord.com
+          TF_VAR_s3_bucket_name:     ${{ vars.S3_BUCKET }}
+          TF_VAR_environment:        production
+          TF_VAR_turn_password:      ${{ secrets.TURN_PASSWORD }}
+          TF_VAR_turn_ssh_public_key: ${{ secrets.TURN_SSH_PUBLIC_KEY }}
 
       # Only apply on push to production or manual dispatch on production (not on PRs)
       - name: Terraform Apply
