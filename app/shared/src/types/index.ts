@@ -162,6 +162,7 @@ export interface VoiceState {
   joinedAt: number; // unix ms
   muted: boolean;
   deafened: boolean;
+  speaking?: boolean; // updated by VAD/PTT client, read by sidebar for speaking indicators
 }
 
 // ─── Voice Signaling (Realtime DB) ───────────────────────────────────────────

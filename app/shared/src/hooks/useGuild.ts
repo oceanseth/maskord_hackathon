@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   collection,
   doc,
+  getDoc,
   onSnapshot,
   query,
   where,
@@ -15,7 +16,8 @@ import {
   Timestamp,
 } from 'firebase/firestore';
 import { httpsCallable } from 'firebase/functions';
-import { getFirebaseDb, getFirebaseFunctions } from '../firebase/init';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { getFirebaseDb, getFirebaseFunctions, getFirebaseStorage } from '../firebase/init';
 import type { Guild, GuildMember, Role, Channel, ChannelType } from '../types';
 
 // ─── User's guild list ────────────────────────────────────────────────────────
@@ -45,11 +47,16 @@ export function useUserGuilds(userId: string | null) {
         setLoading(false);
         return;
       }
-      // Fetch each guild doc
+      // Fetch each guild individually so a permission error on one (e.g. a brief
+      // consistency window after invite join) doesn't kill the whole batch.
       const results = await Promise.all(
         guildIds.map(async (gid) => {
-          const gSnap = await getDocs(query(collection(db, 'guilds'), where('__name__', '==', gid)));
-          return gSnap.docs[0] ? ({ id: gSnap.docs[0].id, ...gSnap.docs[0].data() } as Guild) : null;
+          try {
+            const snap = await getDoc(doc(db, 'guilds', gid));
+            return snap.exists() ? ({ id: snap.id, ...snap.data() } as Guild) : null;
+          } catch {
+            return null; // permission not yet propagated — next snapshot will retry
+          }
         }),
       );
       setGuilds(results.filter(Boolean) as Guild[]);
@@ -228,9 +235,31 @@ export async function updateGuildSettings(
   await updateDoc(doc(db, 'guilds', guildId), updates as Record<string, unknown>);
 }
 
+// ─── Upload guild icon ────────────────────────────────────────────────────────
+
+export async function uploadGuildIcon(guildId: string, file: File): Promise<string> {
+  const storage = getFirebaseStorage();
+  // Fixed filename per guild — overwriting updates the token/URL automatically
+  const iconRef = storageRef(storage, `maskord/guilds/${guildId}/icon/icon`);
+  await uploadBytes(iconRef, file, { contentType: file.type });
+  const url = await getDownloadURL(iconRef);
+  await updateGuildSettings(guildId, { iconUrl: url });
+  return url;
+}
+
 // ─── Delete guild ─────────────────────────────────────────────────────────────
 
 export async function deleteGuild(guildId: string) {
   const db = getFirebaseDb();
   await deleteDoc(doc(db, 'guilds', guildId));
+}
+
+// ─── Join via invite link (Cloud Function) ────────────────────────────────────
+
+export async function joinViaInvite(code: string): Promise<{ guildId: string; alreadyMember: boolean }> {
+  const fn = httpsCallable<{ code: string }, { guildId: string; alreadyMember: boolean }>(
+    getFirebaseFunctions(), 'joinGuildWithInvite',
+  );
+  const result = await fn({ code });
+  return result.data;
 }

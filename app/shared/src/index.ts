@@ -10,7 +10,7 @@ export { Permission, DEFAULT_PERMISSIONS, computeGuildPermissions, computeChanne
 
 // Hooks
 export { useAuth } from './hooks/useAuth';
-export { useUserGuilds, useGuild, useGuildMembers, useGuildRoles, useGuildChannels, createGuild, updateGuildSettings, deleteGuild, leaveGuild, createChannel, updateChannel, deleteChannel, createInvite } from './hooks/useGuild';
+export { useUserGuilds, useGuild, useGuildMembers, useGuildRoles, useGuildChannels, createGuild, updateGuildSettings, uploadGuildIcon, deleteGuild, leaveGuild, createChannel, updateChannel, deleteChannel, createInvite, joinViaInvite } from './hooks/useGuild';
 export { useMessages, sendMessage, editMessage, deleteMessage, toggleReaction } from './hooks/useMessages';
 export { usePresence, updateActiveContext } from './hooks/usePresence';
 export { useUserProfiles } from './hooks/useUsers';

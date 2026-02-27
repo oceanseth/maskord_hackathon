@@ -20,4 +20,7 @@ export default defineConfig({
     outDir: 'dist-web',
     emptyOutDir: true,
   },
+  define: {
+    __WEB_BUILD_DATE__: JSON.stringify(new Date().toISOString()),
+  },
 });

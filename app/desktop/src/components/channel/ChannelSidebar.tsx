@@ -31,6 +31,7 @@ import {
 } from '@maskord/shared';
 import type { Channel } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
+import { useVoiceCtx } from '../voice/VoiceProvider';
 import UserPanel from '../ui/UserPanel';
 import InviteModal from '../guild/InviteModal';
 import ServerSettingsModal from '../guild/ServerSettingsModal';
@@ -68,7 +69,7 @@ function findContainer(id: string, m: Record<string, string[]>): string | null {
 export default function ChannelSidebar({ guildId }: Props) {
   const { guild }    = useGuild(guildId);
   const channels     = useGuildChannels(guildId);
-  const { activeChannelId, setActiveChannel, setActiveGuild, openDm } = useAppStore();
+  const { activeChannelId, setActiveChannel, setActiveGuild, setVoiceChannel, voiceChannelId, openDm } = useAppStore();
   const { firebaseUser } = useAuth();
 
   // Voice participant state for this guild (all channels)
@@ -141,7 +142,12 @@ export default function ChannelSidebar({ guildId }: Props) {
   // ─── Channel actions ─────────────────────────────────────────────────────────
 
   function handleChannelClick(channel: Channel) {
-    setActiveChannel(channel.id, channel.type === 'voice' ? 'voice' : 'text');
+    if (channel.type === 'voice') {
+      setVoiceChannel(guildId, channel.id);
+      setActiveChannel(channel.id, 'voice');
+    } else {
+      setActiveChannel(channel.id, 'text');
+    }
   }
 
   function handleChannelRightClick(e: React.MouseEvent, channelId: string) {
@@ -282,19 +288,24 @@ export default function ChannelSidebar({ guildId }: Props) {
 
   function makeChannelItemProps(ch: Channel) {
     const voiceUserList = ch.type === 'voice'
-      ? Object.entries(guildVoiceState[ch.id] ?? {}).map(([uid, state]) => ({
-          uid,
-          name:      voiceProfiles[uid]?.displayName ?? voiceProfiles[uid]?.twitchUsername ?? 'Unknown',
-          avatarUrl: voiceProfiles[uid]?.avatarUrl ?? '',
-          muted:     state.muted ?? false,
-          deafened:  state.deafened ?? false,
-        }))
+      ? Object.entries(guildVoiceState[ch.id] ?? {}).map(([uid, state]) => {
+          const profile = voiceProfiles[uid];
+          return {
+            uid,
+            name:     profile?.displayName ?? profile?.twitchUsername ?? 'Unknown',
+            avatarUrl: profile?.avatarUrl ?? '',
+            muted:    state.muted    ?? false,
+            deafened: state.deafened ?? false,
+            speaking: state.speaking ?? false,
+          };
+        })
       : [];
 
     return {
-      channel:        ch,
-      active:         activeChannelId === ch.id,
-      renaming:       renamingChannelId === ch.id,
+      channel:           ch,
+      active:            activeChannelId === ch.id,
+      voiceConnected:    ch.type === 'voice' && voiceChannelId === ch.id,
+      renaming:          renamingChannelId === ch.id,
       renameValue,
       renameRef:      renameInputRef,
       onRenameChange: setRenameValue,
@@ -405,6 +416,7 @@ export default function ChannelSidebar({ guildId }: Props) {
           </DndContext>
         </div>
 
+        <VoiceStatusBar channels={channels} />
         {firebaseUser && <UserPanel userId={firebaseUser.uid} />}
       </div>
 
@@ -438,8 +450,14 @@ export default function ChannelSidebar({ guildId }: Props) {
       {showInvite && firebaseUser && (
         <InviteModal guildId={guildId} inviterId={firebaseUser.uid} onClose={() => setShowInvite(false)} />
       )}
-      {showSettings && guild && (
-        <ServerSettingsModal guildId={guildId} currentName={guild.name} onClose={() => setShowSettings(false)} />
+      {showSettings && guild && firebaseUser && (
+        <ServerSettingsModal
+          guildId={guildId}
+          currentName={guild.name}
+          currentIconUrl={guild.iconUrl ?? ''}
+          inviterId={firebaseUser.uid}
+          onClose={() => setShowSettings(false)}
+        />
       )}
       {showCreateChannel !== null && (
         <CreateChannelModal
@@ -461,11 +479,13 @@ interface VoiceUser {
   avatarUrl: string;
   muted: boolean;
   deafened: boolean;
+  speaking: boolean;
 }
 
 interface ChannelItemBaseProps {
   channel: Channel;
   active: boolean;
+  voiceConnected?: boolean;
   renaming: boolean;
   renameValue: string;
   renameRef: React.RefObject<HTMLInputElement>;
@@ -616,7 +636,7 @@ function CategoryHeader({ name, catId: _catId, showAdd, onAdd, onContextMenu, gr
 }
 
 function ChannelItem({
-  channel, active, renaming, renameValue, renameRef,
+  channel, active, voiceConnected, renaming, renameValue, renameRef,
   onRenameChange, onRenameSubmit, onClick, onContextMenu, gripListeners,
   voiceUsers, onVoiceUserClick,
 }: ChannelItemBaseProps) {
@@ -669,6 +689,14 @@ function ChannelItem({
             <span className="text-base opacity-70 flex-shrink-0 leading-none">#</span>
           )}
           <span className="truncate flex-1 text-left">{channel.name}</span>
+          {isVoice && voiceConnected && (
+            <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" title="You're connected" />
+          )}
+          {isVoice && voiceUsers && voiceUsers.length > 0 && (
+            <span className="text-[10px] text-[#6b7280] flex-shrink-0 tabular-nums">
+              {voiceUsers.length}
+            </span>
+          )}
         </button>
       </div>
 
@@ -684,7 +712,7 @@ function ChannelItem({
             >
               {/* Avatar */}
               <div className="relative w-5 h-5 flex-shrink-0">
-                <div className="w-5 h-5 rounded-full bg-violet-600/30 overflow-hidden flex items-center justify-center">
+                <div className={`w-5 h-5 rounded-full bg-violet-600/30 overflow-hidden flex items-center justify-center ${u.speaking ? 'ring-2 ring-green-500 ring-offset-1 ring-offset-[#0e0e16]' : ''}`}>
                   {u.avatarUrl
                     ? <img src={u.avatarUrl} alt={u.name} className="w-full h-full object-cover" />
                     : <span className="text-[8px] font-bold text-violet-300 leading-none">
@@ -731,6 +759,84 @@ function ChannelItem({
         </div>
       )}
     </div>
+  );
+}
+
+// ─── Voice Status Bar ─────────────────────────────────────────────────────────
+
+function VoiceStatusBar({ channels }: { channels: Channel[] }) {
+  const { voiceGuildId, voiceChannelId, setActiveChannel, setActiveGuild } = useAppStore();
+  const { isConnected, isMuted, isDeafened, toggleMute, toggleDeafen, hangUp } = useVoiceCtx();
+
+  if (!voiceChannelId || !isConnected) return null;
+
+  const channelName = channels.find((c) => c.id === voiceChannelId)?.name ?? 'Voice Channel';
+
+  function goToVoice() {
+    if (voiceGuildId) setActiveGuild(voiceGuildId);
+    setActiveChannel(voiceChannelId!, 'voice');
+  }
+
+  return (
+    <div className="border-t border-[#1e1e2e] bg-[#080810] px-3 py-2">
+      {/* Status line */}
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="w-2 h-2 rounded-full bg-green-400 flex-shrink-0" />
+        <div className="flex-1 min-w-0">
+          <div className="text-[10px] text-green-400 font-semibold leading-none mb-0.5">Voice Connected</div>
+          <button
+            onClick={goToVoice}
+            className="text-[11px] text-[#8b949e] hover:text-white truncate block max-w-full transition-colors leading-none"
+          >
+            {channelName}
+          </button>
+        </div>
+      </div>
+      {/* Controls */}
+      <div className="flex items-center gap-1">
+        <StatusBarButton onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'} active={!isMuted}>
+          {isMuted
+            ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z" /></svg>
+            : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.91-3c-.49 0-.9.36-.98.85C16.52 14.2 14.47 16 12 16s-4.52-1.8-4.93-4.15c-.08-.49-.49-.85-.98-.85-.61 0-1.09.54-1 1.14.49 3 2.89 5.35 5.91 5.78V20c0 .55.45 1 1 1s1-.45 1-1v-2.08c3.02-.43 5.42-2.78 5.91-5.78.1-.6-.39-1.14-1-1.14z" /></svg>
+          }
+        </StatusBarButton>
+        <StatusBarButton onClick={toggleDeafen} title={isDeafened ? 'Undeafen' : 'Deafen'} active={!isDeafened}>
+          {isDeafened
+            ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C6.48 3 2 7.48 2 13v4c0 1.1.9 2 2 2h1c1.1 0 2-.9 2-2v-3c0-1.1-.9-2-2-2H4v-1c0-4.42 3.58-8 8-8s8 3.58 8 8v1h-1c-1.1 0-2 .9-2 2v3c0 1.1.9 2 2 2h1c1.1 0 2-.9 2-2v-4c0-5.52-4.48-10-10-10zm-1 9v6h2v-6h-2z" /></svg>
+            : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3C6.48 3 2 7.48 2 13v4c0 1.1.9 2 2 2h1c1.1 0 2-.9 2-2v-3c0-1.1-.9-2-2-2H4v-1c0-4.42 3.58-8 8-8s8 3.58 8 8v1h-1c-1.1 0-2 .9-2 2v3c0 1.1.9 2 2 2h1c1.1 0 2-.9 2-2v-4c0-5.52-4.48-10-10-10z" /></svg>
+          }
+        </StatusBarButton>
+        <StatusBarButton onClick={hangUp} title="Disconnect" danger>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 9c-1.6 0-3.15.25-4.6.72v3.1c0 .39-.23.74-.56.9-.98.49-1.87 1.12-2.66 1.85-.18.18-.43.28-.7.28-.28 0-.53-.11-.71-.29L.29 13.08C.11 12.9 0 12.65 0 12.38c0-.28.11-.53.29-.71C3.34 8.78 7.46 7 12 7s8.66 1.78 11.71 4.67c.18.18.29.43.29.71 0 .28-.11.53-.29.71l-2.48 2.48c-.18.18-.43.29-.71.29-.27 0-.52-.11-.7-.28-.79-.74-1.69-1.36-2.67-1.85-.33-.16-.56-.5-.56-.9v-3.1C15.15 9.25 13.6 9 12 9z" /></svg>
+        </StatusBarButton>
+      </div>
+    </div>
+  );
+}
+
+function StatusBarButton({
+  children, onClick, title, active, danger,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  title: string;
+  active?: boolean;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      className={`flex-1 h-7 rounded flex items-center justify-center transition-colors ${
+        danger
+          ? 'bg-red-900/30 text-red-400 hover:bg-red-700 hover:text-white'
+          : active
+          ? 'bg-[#1e1e2e] text-[#b0b8cc] hover:bg-[#2a2a3e] hover:text-white'
+          : 'bg-red-900/20 text-red-400 hover:bg-[#1e1e2e] hover:text-[#b0b8cc]'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

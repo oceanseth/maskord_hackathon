@@ -27,3 +27,8 @@ output "website_url" {
   description = "Live website URL"
   value       = "https://${var.domain_name}"
 }
+
+output "turn_server_ip" {
+  description = "Elastic IP of the TURN server — use in Firestore _config/turn"
+  value       = aws_eip.turn.public_ip
+}

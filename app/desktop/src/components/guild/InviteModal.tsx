@@ -8,6 +8,25 @@ interface Props {
   onClose: () => void;
 }
 
+function copyToClipboard(text: string) {
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(text).catch(() => execCommandCopy(text));
+  } else {
+    execCommandCopy(text);
+  }
+}
+
+function execCommandCopy(text: string) {
+  const el = document.createElement('textarea');
+  el.value = text;
+  el.style.cssText = 'position:fixed;opacity:0;pointer-events:none';
+  document.body.appendChild(el);
+  el.focus();
+  el.select();
+  document.execCommand('copy');
+  document.body.removeChild(el);
+}
+
 export default function InviteModal({ guildId, inviterId, onClose }: Props) {
   const channels = useGuildChannels(guildId);
   const firstTextChannel = channels.find((c) => c.type === 'text');
@@ -24,11 +43,11 @@ export default function InviteModal({ guildId, inviterId, onClose }: Props) {
       .finally(() => setLoading(false));
   }, [guildId, firstTextChannel?.id, inviterId]);
 
-  const inviteUrl = code ? `https://maskord.com/invite/${code}` : '';
+  const inviteUrl = code ? `https://www.maskord.com/app?invite=${code}` : '';
 
-  async function handleCopy() {
+  function handleCopy() {
     if (!inviteUrl) return;
-    await navigator.clipboard.writeText(inviteUrl);
+    copyToClipboard(inviteUrl);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }

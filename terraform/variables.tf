@@ -33,3 +33,20 @@ variable "cloudfront_price_class" {
   type        = string
   default     = "PriceClass_100"  # US, Canada, Europe — cheapest
 }
+
+variable "turn_region" {
+  description = "AWS region for the TURN server (ap-southeast-2 = Sydney, closest to AU users)"
+  type        = string
+  default     = "ap-southeast-2"
+}
+
+variable "turn_password" {
+  description = "Long-term credential password for the coturn 'maskord' user"
+  type        = string
+  sensitive   = true
+}
+
+variable "turn_ssh_public_key" {
+  description = "SSH public key to authorize on the TURN server (contents of ~/.ssh/id_ed25519.pub or similar)"
+  type        = string
+}

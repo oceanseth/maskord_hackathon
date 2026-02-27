@@ -1,11 +1,19 @@
-import { useEffect } from 'react';
-import { useAuth, useUserGuilds, createGuild } from '@maskord/shared';
+import { useEffect, useMemo } from 'react';
+import { useAuth, useUserGuilds, createGuild, useUserProfiles } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
 
 export default function GuildSidebar() {
   const { firebaseUser, profile } = useAuth();
   const { guilds, loading: guildsLoading } = useUserGuilds(firebaseUser?.uid ?? null);
   const { activeGuildId, setActiveGuild } = useAppStore();
+
+  // Fetch owner profiles for guilds that don't have a custom icon set,
+  // so we can fall back to the owner's avatar (e.g. their Twitch profile pic).
+  const ownerIds = useMemo(
+    () => guilds.filter((g) => !g.iconUrl).map((g) => g.ownerId),
+    [guilds],
+  );
+  const ownerProfiles = useUserProfiles(ownerIds);
 
   // Auto-create a personal server if the user has none.
   // Uses localStorage so the guard survives component remounts / re-renders.
@@ -25,7 +33,11 @@ export default function GuildSidebar() {
     localStorage.setItem(key, '1'); // set BEFORE the async call to prevent races
 
     createGuild(firebaseUser.uid, `${profile.displayName}'s server`)
-      .then((guildId) => setActiveGuild(guildId))
+      .then((guildId) => {
+        // Only auto-navigate if the user hasn't already been sent somewhere
+        // (e.g. via an invite link processed by App.tsx)
+        if (!useAppStore.getState().activeGuildId) setActiveGuild(guildId);
+      })
       .catch(() => localStorage.removeItem(key)); // allow retry on failure
   }, [firebaseUser, profile, guildsLoading, guilds.length, setActiveGuild]);
 
@@ -53,7 +65,7 @@ export default function GuildSidebar() {
             active={activeGuildId === guild.id}
             onClick={() => setActiveGuild(guild.id)}
             label={guild.name}
-            iconUrl={guild.iconUrl}
+            iconUrl={guild.iconUrl || ownerProfiles[guild.ownerId]?.avatarUrl}
             name={guild.name}
           />
         ))}

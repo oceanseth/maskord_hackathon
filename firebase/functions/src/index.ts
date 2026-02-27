@@ -364,6 +364,106 @@ export const onMemberDeleted = onDocumentDeleted(
   },
 );
 
+// ─── TURN Credentials ─────────────────────────────────────────────────────────
+// Returns ICE server config (STUN + TURN) for WebRTC NAT traversal.
+//
+// Setup — create Firestore document at _config/turn (no redeploy needed):
+//
+//   Self-hosted coturn (free — see coturn setup below):
+//     { "provider": "static", "servers": [
+//         { "urls": "stun:stun.l.google.com:19302" },
+//         { "urls": ["turn:YOUR_IP:3478","turn:YOUR_IP:443?transport=tcp"],
+//           "username": "maskord", "credential": "YOUR_PASSWORD" }
+//     ]}
+//
+//   Cloudflare TURN (1TB/month free — no server to manage):
+//     cloudflare.com → Calls → TURN → Create key → copy Key ID + API token
+//     { "provider": "cloudflare", "keyId": "...", "apiToken": "..." }
+//
+//   Metered.ca (1GB/month free):
+//     { "provider": "metered", "apiKey": "...", "appName": "..." }
+//
+//   Also add a Firestore security rule:
+//     match /_config/{doc=**} { allow read, write: if false; }
+//
+// Without config, falls back to STUN-only (same-network calls work; cross-network
+// calls behind symmetric NAT will fail).
+
+// Module-level cache — credentials last 24h; refresh after 23h.
+let cachedTurnServers: unknown[] | null = null;
+let turnCacheTimestamp = 0;
+const TURN_CACHE_TTL = 23 * 60 * 60 * 1000;
+
+export const getTurnCredentials = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+  // Serve from in-memory cache if still fresh
+  if (cachedTurnServers && Date.now() - turnCacheTimestamp < TURN_CACHE_TTL) {
+    return cachedTurnServers;
+  }
+
+  // Read provider config from Firestore (_config/turn — admin SDK bypasses rules)
+  try {
+    const snap = await db.doc('_config/turn').get();
+    const cfg = snap.data() as {
+      provider?: string;
+      // Cloudflare
+      keyId?: string; apiToken?: string;
+      // Metered.ca
+      apiKey?: string; appName?: string;
+      // Static / self-hosted coturn
+      servers?: unknown[];
+    } | undefined;
+
+    if (cfg?.provider === 'cloudflare' && cfg.keyId && cfg.apiToken) {
+      const res = await fetch(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${cfg.keyId}/credentials/generate`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${cfg.apiToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ttl: 86400 }),
+        },
+      );
+      if (res.ok) {
+        const data = await res.json() as { iceServers: unknown[] };
+        cachedTurnServers = data.iceServers;
+        turnCacheTimestamp = Date.now();
+        console.log('[getTurnCredentials] Returning Cloudflare TURN credentials');
+        return cachedTurnServers;
+      }
+      console.warn('[getTurnCredentials] Cloudflare API returned', res.status, await res.text());
+
+    } else if (cfg?.provider === 'metered' && cfg.apiKey && cfg.appName) {
+      const res = await fetch(
+        `https://${cfg.appName}.metered.live/api/v1/turn/credentials?apiKey=${cfg.apiKey}`,
+      );
+      if (res.ok) {
+        cachedTurnServers = await res.json() as unknown[];
+        turnCacheTimestamp = Date.now();
+        console.log('[getTurnCredentials] Returning Metered.ca TURN credentials');
+        return cachedTurnServers;
+      }
+      console.warn('[getTurnCredentials] Metered.ca API returned', res.status);
+
+    } else if (cfg?.provider === 'static' && Array.isArray(cfg.servers)) {
+      // Self-hosted TURN (coturn, etc.) — credentials stored directly in Firestore.
+      // Static credentials don't expire, so cache indefinitely within the instance.
+      cachedTurnServers = cfg.servers as unknown[];
+      turnCacheTimestamp = Date.now();
+      console.log('[getTurnCredentials] Returning static TURN credentials');
+      return cachedTurnServers;
+    }
+  } catch (e) {
+    console.warn('[getTurnCredentials] Failed to fetch TURN credentials:', e);
+  }
+
+  // Fallback — STUN only
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+});
+
 // ─── Clean up stale voice signaling rooms (older than 1 hour) ─────────────────
 
 export const onVoiceStateDeleted = onValueDeleted(

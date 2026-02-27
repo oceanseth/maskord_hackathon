@@ -14,6 +14,11 @@ import type { PresenceState } from '../types';
  * Register the current user's presence in Realtime DB.
  * Uses onDisconnect() to automatically set offline state when
  * the WebSocket connection drops.
+ *
+ * Note: `.info/connected` can fire before the RTDB WebSocket has exchanged
+ * the auth token with the server (the two are async). We catch permission
+ * errors and retry so the first transient denial doesn't leave the user
+ * appearing offline.
  */
 export function usePresence(userId: string | null, status: PresenceState['status'] = 'online') {
   useEffect(() => {
@@ -23,27 +28,38 @@ export function usePresence(userId: string | null, status: PresenceState['status
     const presenceRef: DatabaseReference = ref(rtdb, `presence/${userId}`);
     const connectedRef = ref(rtdb, '.info/connected');
 
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
+
+    async function writePresence() {
+      if (cancelled) return;
+      try {
+        await onDisconnect(presenceRef).set({
+          status: 'offline' as const,
+          lastSeen: serverTimestamp(),
+          activeGuildId: null,
+          activeChannelId: null,
+        });
+        await set(presenceRef, {
+          status,
+          lastSeen: serverTimestamp(),
+          activeGuildId: null,
+          activeChannelId: null,
+        });
+      } catch {
+        // Auth token hasn't propagated to RTDB yet — retry after 2 s
+        if (!cancelled) retryTimer = setTimeout(writePresence, 2000);
+      }
+    }
+
     const unsub = onValue(connectedRef, (snap) => {
       if (!snap.val()) return;
-
-      // When connection is lost, set offline
-      onDisconnect(presenceRef).set({
-        status: 'offline',
-        lastSeen: serverTimestamp(),
-        activeGuildId: null,
-        activeChannelId: null,
-      });
-
-      // Set online immediately
-      set(presenceRef, {
-        status,
-        lastSeen: serverTimestamp(),
-        activeGuildId: null,
-        activeChannelId: null,
-      });
+      writePresence();
     });
 
     return () => {
+      cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       unsub();
       // Explicitly mark offline on clean unmount
       set(presenceRef, {

@@ -79,6 +79,8 @@ export default function AuthScreen() {
     // Web: redirect to Twitch, which redirects back to WEB_REDIRECT_URI?code=...
     const state = crypto.randomUUID();
     sessionStorage.setItem('twitch_oauth_state', state);
+    // Preserve invite params — App.tsx also does this on mount, but belt + suspenders
+    preserveInviteParams();
 
     const authUrl = new URL('https://id.twitch.tv/oauth2/authorize');
     authUrl.searchParams.set('client_id',     TWITCH_CLIENT_ID);
@@ -87,6 +89,15 @@ export default function AuthScreen() {
     authUrl.searchParams.set('scope',         'user:read:email');
     authUrl.searchParams.set('state',         state);
     window.location.href = authUrl.toString();
+  }
+
+  // Save any invite params before Google redirect (popup keeps URL, redirect loses it)
+  function preserveInviteParams() {
+    const p = new URLSearchParams(window.location.search);
+    const invite = p.get('invite');
+    const vc     = p.get('vc');
+    if (invite) sessionStorage.setItem('pending_invite', invite);
+    if (vc)     sessionStorage.setItem('pending_vc',     vc);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -201,7 +212,7 @@ export default function AuthScreen() {
 
             {/* Google sign in */}
             <button
-              onClick={() => signInWithGoogle()}
+              onClick={() => { preserveInviteParams(); signInWithGoogle(); }}
               disabled={anyLoading}
               className="w-full py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] hover:border-violet-700/50 disabled:opacity-50 text-[#e2e8f0] font-medium text-sm transition-colors flex items-center justify-center gap-2"
             >

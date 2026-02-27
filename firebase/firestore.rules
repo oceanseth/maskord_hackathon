@@ -54,6 +54,14 @@ service cloud.firestore {
          getRole(guildId, getMember(guildId).roles[0]).permissions & permBit != 0);
     }
 
+    // ─── Internal config (admin SDK only) ─────────────────────────────────────
+    // _config/* is read/written only by Cloud Functions via the admin SDK.
+    // Clients have no access regardless of auth state.
+
+    match /_config/{document=**} {
+      allow read, write: if false;
+    }
+
     // ─── Users ─────────────────────────────────────────────────────────────────
 
     match /users/{userId} {
