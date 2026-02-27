@@ -48,6 +48,32 @@
       }
     },
 
+    "voiceInbox": {
+      "$userId": {
+        // Only the recipient reads their own inbox
+        ".read": "auth != null && auth.uid == $userId",
+        "$roomId": {
+          // Any authenticated user can write a notification to someone's inbox
+          ".write": "auth != null",
+          ".validate": "newData.isString()"
+        }
+      }
+    },
+
+    "voiceReconnectRequest": {
+      "$targetUserId": {
+        // Only the target reads their own reconnect requests
+        ".read": "auth != null && auth.uid == $targetUserId",
+        // Target can delete their entire slot on leave (newData must not exist = delete only)
+        ".write": "auth != null && auth.uid == $targetUserId && !newData.exists()",
+        "$requesterId": {
+          // Requester writes their entry; target can delete it after processing
+          ".write": "auth != null && (auth.uid == $requesterId || auth.uid == $targetUserId)",
+          ".validate": "newData.isNumber()"
+        }
+      }
+    },
+
     "voiceSignaling": {
       "$roomId": {
         // Any authenticated user can read a signaling room (needed for WebRTC)
