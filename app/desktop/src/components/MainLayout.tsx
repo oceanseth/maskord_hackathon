@@ -1,17 +1,22 @@
-import { useAuth } from '@maskord/shared';
 import { useAppStore } from '../store/app';
 import GuildSidebar from './guild/GuildSidebar';
 import ChannelSidebar from './channel/ChannelSidebar';
+import HomePanel from './home/HomePanel';
+import HomeDashboard from './home/HomeDashboard';
 import TextChannel from './channel/TextChannel';
 import VoiceChannel from './voice/VoiceChannel';
 import { VoiceProvider } from './voice/VoiceProvider';
 import DmPanel from './voice/DmPanel';
 import WelcomePanel from './ui/WelcomePanel';
-import UserPanel from './ui/UserPanel';
 
 export default function MainLayout() {
-  const { activeGuildId, activeChannelId, activeChannelType, activeDmPartnerId } = useAppStore();
-  const { firebaseUser } = useAuth();
+  const {
+    activeView,
+    activeGuildId,
+    activeChannelId,
+    activeChannelType,
+    activeDmPartnerId,
+  } = useAppStore();
 
   return (
     <VoiceProvider>
@@ -19,15 +24,10 @@ export default function MainLayout() {
         {/* Guild list — leftmost narrow column */}
         <GuildSidebar />
 
-        {/* Channel list — second column (always visible so UserPanel is always shown) */}
-        {activeGuildId
+        {/* Column 2 — HomePanel or ChannelSidebar */}
+        {activeView === 'guild' && activeGuildId
           ? <ChannelSidebar guildId={activeGuildId} />
-          : (
-            <div className="w-60 flex-shrink-0 bg-[#0e0e16] border-r border-[#1e1e2e] flex flex-col">
-              <div className="flex-1" />
-              {firebaseUser && <UserPanel userId={firebaseUser.uid} />}
-            </div>
-          )
+          : <HomePanel />
         }
 
         {/* Main content panel */}
@@ -35,14 +35,16 @@ export default function MainLayout() {
           {activeDmPartnerId && (
             <DmPanel partnerUid={activeDmPartnerId} />
           )}
-          {!activeDmPartnerId && !activeGuildId && <WelcomePanel />}
-          {!activeDmPartnerId && activeGuildId && activeChannelType === 'text' && activeChannelId && (
+          {!activeDmPartnerId && activeView === 'home' && (
+            <HomeDashboard />
+          )}
+          {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelType === 'text' && activeChannelId && (
             <TextChannel guildId={activeGuildId} channelId={activeChannelId} />
           )}
-          {!activeDmPartnerId && activeGuildId && activeChannelType === 'voice' && activeChannelId && (
+          {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelType === 'voice' && activeChannelId && (
             <VoiceChannel guildId={activeGuildId} channelId={activeChannelId} />
           )}
-          {!activeDmPartnerId && activeGuildId && !activeChannelId && (
+          {!activeDmPartnerId && activeView === 'guild' && activeGuildId && !activeChannelId && (
             <WelcomePanel />
           )}
         </div>

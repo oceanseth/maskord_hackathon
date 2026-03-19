@@ -3,6 +3,7 @@ import { useAuth, useGuildMembers, useGuildChannels, useMessages, useUserProfile
 import type { Message } from '@maskord/shared';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { formatDistanceToNow } from 'date-fns';
+import UserProfilePopover from '../ui/UserProfilePopover';
 
 interface Props {
   guildId: string;
@@ -20,6 +21,12 @@ export default function TextChannel({ guildId, channelId }: Props) {
   const [editContent, setEditContent] = useState('');
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Profile popover state
+  const [profilePopover, setProfilePopover] = useState<{
+    userId: string;
+    anchorRect: DOMRect;
+  } | null>(null);
 
   // Collect unique author IDs so we can fetch their profiles
   const authorIds = useMemo(
@@ -45,6 +52,11 @@ export default function TextChannel({ guildId, channelId }: Props) {
     },
     [members, userProfiles],
   );
+
+  function handleUserClick(userId: string, e: React.MouseEvent) {
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setProfilePopover({ userId, anchorRect: rect });
+  }
 
   async function handleSend(e: React.FormEvent) {
     e.preventDefault();
@@ -102,6 +114,7 @@ export default function TextChannel({ guildId, channelId }: Props) {
                   onEditSubmit={() => handleEdit(msg)}
                   onEditCancel={() => setEditingId(null)}
                   onDelete={() => deleteMessage(guildId, channelId, msg.id)}
+                  onUserClick={handleUserClick}
                 />
               )}
               components={{
@@ -142,6 +155,17 @@ export default function TextChannel({ guildId, channelId }: Props) {
           </form>
         </div>
       </div>
+
+      {/* User profile popover */}
+      {profilePopover && firebaseUser && (
+        <UserProfilePopover
+          userId={profilePopover.userId}
+          viewerUid={firebaseUser.uid}
+          guildId={guildId}
+          anchorRect={profilePopover.anchorRect}
+          onClose={() => setProfilePopover(null)}
+        />
+      )}
     </div>
   );
 }
@@ -159,6 +183,7 @@ interface MessageRowProps {
   onEditSubmit: () => void;
   onEditCancel: () => void;
   onDelete: () => void;
+  onUserClick: (userId: string, e: React.MouseEvent) => void;
 }
 
 function MessageRow({
@@ -172,6 +197,7 @@ function MessageRow({
   onEditSubmit,
   onEditCancel,
   onDelete,
+  onUserClick,
 }: MessageRowProps) {
   const isOwn = message.authorId === currentUserId;
   const { name, avatarUrl } = getMemberInfo(message.authorId);
@@ -191,18 +217,29 @@ function MessageRow({
 
   return (
     <div className="group flex gap-3 px-4 py-1 hover:bg-[#1a1a28]/40 transition-colors">
-      {/* Avatar */}
-      <div className="w-10 h-10 rounded-full bg-violet-600/30 flex items-center justify-center flex-shrink-0 mt-0.5 overflow-hidden">
+      {/* Avatar — clickable */}
+      <button
+        onClick={(e) => onUserClick(message.authorId, e)}
+        className="w-10 h-10 rounded-full bg-violet-600/30 flex items-center justify-center flex-shrink-0 mt-0.5 overflow-hidden hover:opacity-80 transition-opacity cursor-pointer"
+        title={`View ${name}'s profile`}
+      >
         {avatarUrl
           ? <img src={avatarUrl} alt={name} className="w-full h-full object-cover" />
           : <span className="text-xs font-bold text-violet-300">{initials}</span>
         }
-      </div>
+      </button>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 mb-0.5">
-          <span className="font-semibold text-sm text-white">{name}</span>
+          {/* Username — clickable */}
+          <button
+            onClick={(e) => onUserClick(message.authorId, e)}
+            className="font-semibold text-sm text-white hover:underline cursor-pointer"
+            title={`View ${name}'s profile`}
+          >
+            {name}
+          </button>
           <span className="text-[10px] text-[#4b5563]">{time}</span>
           {message.editedAt && (
             <span className="text-[10px] text-[#4b5563]">(edited)</span>

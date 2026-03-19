@@ -20,7 +20,7 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
   } = useVoiceCtx();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [needsInteraction, setNeedsInteraction] = useState(false);
+  const { needsInteraction, clearNeedsInteraction } = useVoiceCtx();
 
   const participantIds = participants.map((p) => p.userId);
   const allIds = useMemo(() => {
@@ -75,7 +75,7 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
             document.querySelectorAll<HTMLAudioElement>('audio[data-voice]').forEach((a) => {
               a.play().catch(() => {});
             });
-            setNeedsInteraction(false);
+            clearNeedsInteraction();
           }}
           className="mx-4 mt-3 px-4 py-3 w-[calc(100%-2rem)] text-left bg-violet-900/40 border border-violet-600/60 rounded-lg text-violet-200 text-sm hover:bg-violet-900/60 transition-colors flex items-center gap-3 cursor-pointer"
         >
@@ -118,8 +118,6 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
                   avatarUrl={avatarUrl}
                   stream={p.stream}
                   isMuted={p.state.muted}
-                  outputDeviceId={voiceSettings.outputDeviceId}
-                  onAutoplayBlocked={() => setNeedsInteraction(true)}
                 />
               );
             })}
@@ -374,39 +372,17 @@ interface TileProps {
   isMuted: boolean;
   speaking?: boolean;   // explicit override (local user)
   isSelf?: boolean;
-  outputDeviceId?: string;
-  onAutoplayBlocked?: () => void;
 }
 
-function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingOverride, isSelf, outputDeviceId, onAutoplayBlocked }: TileProps) {
-  const audioRef = useRef<HTMLAudioElement>(null);
+function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingOverride, isSelf }: TileProps) {
   const initials = name.substring(0, 2).toUpperCase();
 
   // For remote participants: detect speaking locally via AudioContext
   const remoteSpeaking = useSpeakingDetector(isSelf ? null : stream);
   const speaking = isSelf ? (speakingOverride ?? false) : (remoteSpeaking && !isMuted);
 
-  // Wire stream + apply output device, then play.
-  // Combined into one effect so that a pre-selected output device is applied
-  // when the stream first arrives, and device changes mid-call are also handled.
-  // setSinkId must be called before play() for the device to take effect.
-  useEffect(() => {
-    const audio = audioRef.current as (HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> }) | null;
-    if (!audio || !stream || isSelf) return;
-
-    audio.srcObject = stream;
-
-    const applyAndPlay = async () => {
-      if (outputDeviceId && audio.setSinkId) {
-        await audio.setSinkId(outputDeviceId).catch(() => {});
-      }
-      if (audio.paused) {
-        await audio.play().catch(() => { onAutoplayBlocked?.(); });
-      }
-    };
-
-    applyAndPlay();
-  }, [stream, isSelf, outputDeviceId]);
+  // Note: audio playback is handled by PersistentAudio inside VoiceProvider so it
+  // survives switching to text channels. No <audio> element is needed here.
 
   return (
     <div className={`
@@ -415,9 +391,6 @@ function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingO
       ${isSelf ? 'border-violet-700/50' : 'border-[#1e1e2e]'}
       ${speaking ? 'ring-2 ring-green-500 ring-offset-2 ring-offset-[#0e0e16]' : ''}
     `}>
-      {!isSelf && stream && (
-        <audio ref={audioRef} autoPlay playsInline data-voice className="hidden" />
-      )}
 
       {/* Avatar */}
       <div className={`

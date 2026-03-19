@@ -85,6 +85,10 @@ export interface Channel {
   nsfw: boolean;
   parentId: string | null; // category channel id
   permissionOverwrites: Record<string, PermissionOverwrite>; // keyed by roleId or userId
+  /** Total messages ever sent in this channel — incremented server-side on each send. */
+  messageCount?: number;
+  /** Timestamp of the most recent message — set server-side on each send. */
+  lastMessageAt?: Timestamp;
 }
 
 // ─── Message ─────────────────────────────────────────────────────────────────
@@ -142,9 +146,21 @@ export interface DirectMessage {
   id: string;
   content: string;
   senderId: string;
+  /** @deprecated stored as authorId in messages created before the senderId migration */
+  authorId?: string;
   createdAt: Timestamp;
   readBy: string[];
   attachments: Attachment[];
+}
+
+// ─── Friendship ──────────────────────────────────────────────────────────────
+
+export interface Friendship {
+  id: string;
+  uids: string[];
+  status: 'pending' | 'accepted';
+  requesterId: string;
+  createdAt: Timestamp;
 }
 
 // ─── Presence (Realtime DB) ───────────────────────────────────────────────────

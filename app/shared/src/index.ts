@@ -17,3 +17,6 @@ export { useUserProfiles } from './hooks/useUsers';
 export { useVoiceChannel, useGuildVoiceState } from './hooks/useVoice';
 export type { VoiceParticipant } from './hooks/useVoice';
 export { useDmMessages, sendDmMessage, dmChannelId } from './hooks/useDmMessages';
+export { useFriendships, friendshipId } from './hooks/useFriendships';
+export { useDmConversations } from './hooks/useDmConversations';
+export { useBulkPresence } from './hooks/useBulkPresence';

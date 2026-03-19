@@ -439,6 +439,13 @@ export function useVoiceChannel(
       if (!room?.answer || answerHandled) return;
       answerHandled = true; // synchronous — blocks any concurrent onValue fire
 
+      // PC may have been closed by the participant-left cleanup before the answer arrived
+      if (pc.signalingState === 'closed') {
+        warn('  PC already closed — discarding answer from', remoteUserId);
+        unsubRoom();
+        return;
+      }
+
       log('  got answer from', remoteUserId, '— setting remote description');
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(room.answer));

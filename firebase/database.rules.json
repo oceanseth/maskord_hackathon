@@ -27,22 +27,17 @@
 
     "voiceState": {
       "$guildId": {
+        // Any authenticated user can read voice channel state (to show who's in the channel)
+        ".read": "auth != null",
         "$channelId": {
-          // Any authenticated user can read voice channel state (to show who's in the channel)
-          ".read": "auth != null",
           "$userId": {
             // Users can only write their own voice state
             ".write": "auth != null && auth.uid == $userId",
             ".validate": "newData.hasChildren(['joinedAt', 'muted', 'deafened'])",
-            "joinedAt": {
-              ".validate": "newData.isNumber()"
-            },
-            "muted": {
-              ".validate": "newData.isBoolean()"
-            },
-            "deafened": {
-              ".validate": "newData.isBoolean()"
-            }
+            "joinedAt":  { ".validate": "newData.isNumber()" },
+            "muted":     { ".validate": "newData.isBoolean()" },
+            "deafened":  { ".validate": "newData.isBoolean()" },
+            "speaking":  { ".validate": "newData.isBoolean()" }
           }
         }
       }
@@ -70,6 +65,28 @@
           // Requester writes their entry; target can delete it after processing
           ".write": "auth != null && (auth.uid == $requesterId || auth.uid == $targetUserId)",
           ".validate": "newData.isNumber()"
+        }
+      }
+    },
+
+    "dmRing": {
+      "$calleeId": {
+        ".read": "auth != null && auth.uid == $calleeId",
+        "$callId": {
+          ".write": "auth != null",
+          ".validate": "!newData.exists() || newData.hasChildren(['callerId', 'ts'])",
+          "callerId": { ".validate": "newData.isString()" },
+          "ts":       { ".validate": "newData.isNumber()" }
+        }
+      }
+    },
+
+    "dmRingResponse": {
+      "$callerId": {
+        ".read": "auth != null && auth.uid == $callerId",
+        "$callId": {
+          ".write": "auth != null",
+          ".validate": "!newData.exists() || newData.isString()"
         }
       }
     },

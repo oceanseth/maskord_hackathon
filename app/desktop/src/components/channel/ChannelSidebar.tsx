@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import {
   DndContext,
   DragOverlay,
@@ -38,6 +38,21 @@ import ServerSettingsModal from '../guild/ServerSettingsModal';
 import CreateChannelModal from './CreateChannelModal';
 
 interface Props { guildId: string; }
+
+// ─── Channel unread helpers (localStorage-based) ──────────────────────────────
+
+const chLsKey = (channelId: string) => `maskord_ch_seen_${channelId}`;
+
+function loadSeenCount(channelId: string): number {
+  try {
+    const v = localStorage.getItem(chLsKey(channelId));
+    return v ? parseInt(v, 10) : 0;
+  } catch { return 0; }
+}
+
+function saveSeenCount(channelId: string, count: number) {
+  try { localStorage.setItem(chLsKey(channelId), String(count)); } catch {}
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -79,6 +94,32 @@ export default function ChannelSidebar({ guildId }: Props) {
     [guildVoiceState],
   );
   const voiceProfiles = useUserProfiles(voiceUserIds);
+
+  // ─── Unread count tracking ───────────────────────────────────────────────────
+  // seenCounts caches localStorage reads and is updated on navigation
+  const [seenCounts, setSeenCounts] = useState<Record<string, number>>({});
+
+  const getUnread = useCallback(
+    (channelId: string, messageCount: number): number => {
+      const lastSeen = seenCounts[channelId] ?? loadSeenCount(channelId);
+      return Math.max(0, messageCount - lastSeen);
+    },
+    [seenCounts],
+  );
+
+  const markChannelSeen = useCallback((channelId: string, count: number) => {
+    saveSeenCount(channelId, count);
+    setSeenCounts((prev) => ({ ...prev, [channelId]: count }));
+  }, []);
+
+  // Mark the currently active text channel as seen when it (or its messageCount) changes
+  useEffect(() => {
+    if (!activeChannelId) return;
+    const ch = channels.find((c) => c.id === activeChannelId);
+    if (!ch || ch.type !== 'text') return;
+    markChannelSeen(activeChannelId, ch.messageCount ?? 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeChannelId]);
 
   const [headerMenuOpen,    setHeaderMenuOpen]    = useState(false);
   const [showInvite,        setShowInvite]        = useState(false);
@@ -147,6 +188,7 @@ export default function ChannelSidebar({ guildId }: Props) {
       setActiveChannel(channel.id, 'voice');
     } else {
       setActiveChannel(channel.id, 'text');
+      markChannelSeen(channel.id, channel.messageCount ?? 0);
     }
   }
 
@@ -305,6 +347,7 @@ export default function ChannelSidebar({ guildId }: Props) {
       channel:           ch,
       active:            activeChannelId === ch.id,
       voiceConnected:    ch.type === 'voice' && voiceChannelId === ch.id,
+      unreadCount:       ch.type === 'text' ? getUnread(ch.id, ch.messageCount ?? 0) : 0,
       renaming:          renamingChannelId === ch.id,
       renameValue,
       renameRef:      renameInputRef,
@@ -486,6 +529,7 @@ interface ChannelItemBaseProps {
   channel: Channel;
   active: boolean;
   voiceConnected?: boolean;
+  unreadCount?: number;
   renaming: boolean;
   renameValue: string;
   renameRef: React.RefObject<HTMLInputElement>;
@@ -636,7 +680,7 @@ function CategoryHeader({ name, catId: _catId, showAdd, onAdd, onContextMenu, gr
 }
 
 function ChannelItem({
-  channel, active, voiceConnected, renaming, renameValue, renameRef,
+  channel, active, voiceConnected, unreadCount, renaming, renameValue, renameRef,
   onRenameChange, onRenameSubmit, onClick, onContextMenu, gripListeners,
   voiceUsers, onVoiceUserClick,
 }: ChannelItemBaseProps) {
@@ -697,6 +741,11 @@ function ChannelItem({
               {voiceUsers.length}
             </span>
           )}
+          {!isVoice && !active && unreadCount && unreadCount > 0 ? (
+            <span className="flex-shrink-0 text-[10px] font-bold text-white bg-green-600 rounded-full min-w-[16px] h-4 flex items-center justify-center px-1 tabular-nums">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          ) : null}
         </button>
       </div>
 

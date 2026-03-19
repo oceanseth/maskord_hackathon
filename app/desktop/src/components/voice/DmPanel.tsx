@@ -1,53 +1,113 @@
-import { useEffect, useRef, useState } from 'react';
-import { useAuth, useUserProfiles, useDmMessages, sendDmMessage } from '@maskord/shared';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import {
+  useAuth,
+  useUserProfiles,
+  useDmMessages,
+  sendDmMessage,
+  useFriendships,
+  dmChannelId,
+} from '@maskord/shared';
 import { useAppStore } from '../../store/app';
+import { useVoiceCtx } from './VoiceProvider';
+import { saveDmLastSeen } from '../../hooks/useDmUnread';
 
 interface Props {
   partnerUid: string;
 }
 
+function formatTs(ts: unknown): string {
+  if (!ts) return '';
+  const date = (ts as { toDate?: () => Date }).toDate?.() ?? new Date(ts as number);
+  const now   = new Date();
+  const today = date.toDateString() === now.toDateString();
+  return today
+    ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 export default function DmPanel({ partnerUid }: Props) {
-  const { firebaseUser }  = useAuth();
-  const { closeDm }       = useAppStore();
-  const profiles          = useUserProfiles([partnerUid, firebaseUser?.uid ?? ''].filter(Boolean));
+  const { firebaseUser, profile: myProfile } = useAuth();
+  const { closeDm } = useAppStore();
+  const { startDmCall, isDmCall, dmCallPartnerId, dmCallStatus } = useVoiceCtx();
+
+  const isCallWithPartner = isDmCall && dmCallPartnerId === partnerUid;
+  const callLabel =
+    isCallWithPartner && dmCallStatus === 'ringing'   ? 'Calling…' :
+    isCallWithPartner && dmCallStatus === 'connected'  ? 'In call' : null;
+
+  const profiles  = useUserProfiles([partnerUid, firebaseUser?.uid ?? ''].filter(Boolean));
   const { messages, loading } = useDmMessages(firebaseUser?.uid ?? null, partnerUid);
+
+  const { friends, pendingIncoming, pendingOutgoing, sendRequest, acceptRequest } =
+    useFriendships(firebaseUser?.uid ?? null);
+
+  const isFriend = friends.some((f) => f.uids.includes(partnerUid));
+  const outgoing = pendingOutgoing.find((f) => f.uids.includes(partnerUid));
+  const incoming = pendingIncoming.find((f) => f.uids.includes(partnerUid));
 
   const [input,     setInput]     = useState('');
   const [sending,   setSending]   = useState(false);
+  const [friendBusy, setFriendBusy] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef  = useRef<HTMLInputElement>(null);
 
   const partner = profiles[partnerUid];
-  const self    = firebaseUser ? profiles[firebaseUser.uid] : null;
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+
+  // Deterministic DM conversation ID — mark as read when panel opens
+  const convId = useMemo(
+    () => (firebaseUser ? dmChannelId(firebaseUser.uid, partnerUid) : null),
+    [firebaseUser?.uid, partnerUid],
+  );
+  useEffect(() => {
+    if (convId) saveDmLastSeen(convId);
+  }, [convId]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
   function getDisplayName(uid: string) {
-    const p = profiles[uid];
-    return p?.displayName ?? p?.twitchUsername ?? 'Unknown';
+    const p = profiles[uid] ?? (uid === firebaseUser?.uid ? myProfile : null);
+    return p?.displayName ?? p?.twitchUsername ?? uid.slice(0, 6);
   }
 
   function getAvatar(uid: string) {
-    return profiles[uid]?.avatarUrl ?? '';
+    const p = profiles[uid] ?? (uid === firebaseUser?.uid ? myProfile : null);
+    return p?.avatarUrl ?? '';
   }
 
-  async function handleSend() {
+  const handleSend = useCallback(async () => {
     if (!input.trim() || !firebaseUser) return;
     const text = input.trim();
     setInput('');
     setSending(true);
     try {
       await sendDmMessage(firebaseUser.uid, partnerUid, text);
+    } catch {
+      // Restore text so the user doesn't lose their message on a permission error
+      setInput(text);
     } finally {
       setSending(false);
+      inputRef.current?.focus();
     }
+  }, [input, firebaseUser, partnerUid]);
+
+  async function handleAddFriend() {
+    setFriendBusy(true);
+    try { await sendRequest(partnerUid); } finally { setFriendBusy(false); }
+  }
+
+  async function handleAccept(id: string) {
+    setFriendBusy(true);
+    try { await acceptRequest(id); } finally { setFriendBusy(false); }
   }
 
   return (
     <div className="flex-1 flex flex-col bg-[#0e0e16] min-w-0">
       {/* Header */}
       <div className="h-12 flex items-center gap-3 px-4 border-b border-[#1e1e2e] flex-shrink-0">
+        {/* Avatar */}
         <div className="w-8 h-8 rounded-full bg-violet-600/30 overflow-hidden flex items-center justify-center flex-shrink-0">
           {partner?.avatarUrl
             ? <img src={partner.avatarUrl} alt="" className="w-full h-full object-cover" />
@@ -56,13 +116,68 @@ export default function DmPanel({ partnerUid }: Props) {
               </span>
           }
         </div>
-        <span className="font-semibold text-white text-sm flex-1 truncate">
-          {partner?.displayName ?? partner?.twitchUsername ?? 'Direct Message'}
-        </span>
+
+        {/* Name + last message time */}
+        <div className="flex-1 min-w-0">
+          <p className="font-semibold text-white text-sm leading-tight truncate">
+            {partner?.displayName ?? partner?.twitchUsername ?? 'Direct Message'}
+          </p>
+          {lastMsg && (
+            <p className="text-[10px] text-[#4b5563] leading-tight">
+              Last message {formatTs(lastMsg.createdAt)}
+            </p>
+          )}
+        </div>
+
+        {/* Call button / status */}
+        {isCallWithPartner ? (
+          <span className="text-xs font-medium text-green-400 flex-shrink-0 flex items-center gap-1">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" />
+            </svg>
+            {callLabel}
+          </span>
+        ) : (
+          <button
+            onClick={() => startDmCall(partnerUid)}
+            disabled={isDmCall}
+            title="Start voice call"
+            className="flex-shrink-0 text-[#6b7280] hover:text-violet-300 disabled:opacity-30 transition-colors"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M6.6 10.8c1.4 2.8 3.8 5.1 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.1.4 2.3.6 3.6.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1-9.4 0-17-7.6-17-17 0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.6.1.3 0 .7-.2 1L6.6 10.8z" />
+            </svg>
+          </button>
+        )}
+
+        {/* Friendship status / action */}
+        {isFriend ? (
+          <span className="text-xs font-medium text-green-400 flex-shrink-0">Friends</span>
+        ) : outgoing ? (
+          <span className="text-xs text-[#6b7280] flex-shrink-0">Request Sent</span>
+        ) : incoming ? (
+          <button
+            onClick={() => handleAccept(incoming.id)}
+            disabled={friendBusy}
+            className="flex-shrink-0 text-xs px-2.5 py-1 rounded-full bg-violet-600 hover:bg-violet-500 disabled:opacity-50 text-white font-medium transition-colors"
+          >
+            Accept Request
+          </button>
+        ) : (
+          <button
+            onClick={handleAddFriend}
+            disabled={friendBusy}
+            className="flex-shrink-0 text-xs px-2.5 py-1 rounded-full border border-[#2a2a3e] hover:border-violet-500/60 text-[#9ca3af] hover:text-violet-300 disabled:opacity-50 font-medium transition-colors"
+          >
+            Add Friend
+          </button>
+        )}
+
+        {/* Close */}
         <button
           onClick={closeDm}
           title="Close DM"
-          className="text-[#6b7280] hover:text-white transition-colors"
+          className="flex-shrink-0 text-[#6b7280] hover:text-white transition-colors ml-1"
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
             <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" />
@@ -84,10 +199,12 @@ export default function DmPanel({ partnerUid }: Props) {
           </div>
         )}
         {messages.map((msg) => {
-          const isSelf   = msg.authorId === firebaseUser?.uid;
-          const name     = getDisplayName(msg.authorId);
-          const avatar   = getAvatar(msg.authorId);
-          const initials = name.substring(0, 2).toUpperCase();
+          // senderId is the current field; authorId is the legacy field pre-migration
+          const senderUid = msg.senderId || msg.authorId || '';
+          const isSelf    = senderUid === firebaseUser?.uid;
+          const name      = getDisplayName(senderUid);
+          const avatar    = getAvatar(senderUid);
+          const initials  = name.substring(0, 2).toUpperCase();
 
           return (
             <div key={msg.id} className="flex items-start gap-3 py-1 group hover:bg-[#1a1a28]/40 rounded-lg px-2 -mx-2">
@@ -103,9 +220,7 @@ export default function DmPanel({ partnerUid }: Props) {
                     {name}
                   </span>
                   <span className="text-xs text-[#4b5563]">
-                    {msg.createdAt
-                      ? new Date((msg.createdAt as { toDate?: () => Date }).toDate?.() ?? msg.createdAt as unknown as number).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                      : ''}
+                    {formatTs(msg.createdAt)}
                   </span>
                 </div>
                 <p className="text-sm text-[#c8d0e0] break-words">{msg.content}</p>
@@ -120,6 +235,7 @@ export default function DmPanel({ partnerUid }: Props) {
       <div className="px-4 pb-4 flex-shrink-0">
         <div className="flex items-center gap-2 bg-[#12121a] rounded-xl border border-[#1e1e2e] px-4 py-2.5">
           <input
+            ref={inputRef}
             className="flex-1 bg-transparent text-white text-sm outline-none placeholder-[#4b5563]"
             placeholder={`Message ${partner?.displayName ?? partner?.twitchUsername ?? 'user'}…`}
             value={input}

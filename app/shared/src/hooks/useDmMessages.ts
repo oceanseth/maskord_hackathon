@@ -15,7 +15,7 @@ import {
   type DocumentData,
 } from 'firebase/firestore';
 import { getFirebaseDb } from '../firebase/init';
-import type { Message } from '../types';
+import type { DirectMessage } from '../types';
 
 const PAGE_SIZE = 50;
 
@@ -25,7 +25,7 @@ export function dmChannelId(uid1: string, uid2: string): string {
 }
 
 export function useDmMessages(localUid: string | null, partnerUid: string | null) {
-  const [messages, setMessages]   = useState<Message[]>([]);
+  const [messages, setMessages]   = useState<DirectMessage[]>([]);
   const [loading, setLoading]     = useState(true);
   const [hasMore, setHasMore]     = useState(true);
   const [oldestDoc, setOldestDoc] = useState<QueryDocumentSnapshot<DocumentData> | null>(null);
@@ -33,27 +33,45 @@ export function useDmMessages(localUid: string | null, partnerUid: string | null
   const dmId = localUid && partnerUid ? dmChannelId(localUid, partnerUid) : null;
 
   useEffect(() => {
-    if (!dmId) { setMessages([]); setLoading(false); return; }
+    if (!dmId || !localUid || !partnerUid) { setMessages([]); setLoading(false); return; }
 
     setLoading(true);
     setMessages([]);
     setHasMore(true);
     setOldestDoc(null);
 
-    const db  = getFirebaseDb();
-    const ref = collection(db, 'directMessages', dmId, 'messages');
-    const q   = query(ref, orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
+    const db = getFirebaseDb();
+    let unsub: (() => void) | undefined;
+    let cancelled = false;
 
-    const unsub = onSnapshot(q, (snap) => {
-      const docs = snap.docs.reverse();
-      setMessages(docs.map((d) => ({ id: d.id, ...d.data() } as Message)));
-      if (docs.length > 0) setOldestDoc(snap.docs[snap.docs.length - 1]);
-      setHasMore(snap.docs.length === PAGE_SIZE);
-      setLoading(false);
+    // Ensure the conversation doc exists BEFORE attaching the snapshot listener.
+    // The subcollection read rule does get(conversationDoc).data.participants —
+    // if the doc is missing that get() returns null and the rule denies the read,
+    // killing the listener permanently before any message is ever sent.
+    setDoc(
+      doc(db, 'directMessages', dmId),
+      { participants: [localUid, partnerUid].sort() },
+      { merge: true },
+    ).then(() => {
+      if (cancelled) return;
+      const ref = collection(db, 'directMessages', dmId, 'messages');
+      const q   = query(ref, orderBy('createdAt', 'desc'), limit(PAGE_SIZE));
+      unsub = onSnapshot(q, (snap) => {
+        const docs = snap.docs.reverse();
+        setMessages(docs.map((d) => ({ id: d.id, ...d.data() } as DirectMessage)));
+        if (docs.length > 0) setOldestDoc(snap.docs[snap.docs.length - 1]);
+        setHasMore(snap.docs.length === PAGE_SIZE);
+        setLoading(false);
+      });
+    }).catch(() => {
+      if (!cancelled) setLoading(false);
     });
 
-    return unsub;
-  }, [dmId]);
+    return () => {
+      cancelled = true;
+      unsub?.();
+    };
+  }, [dmId, localUid, partnerUid]);
 
   const loadMore = useCallback(async () => {
     if (!dmId || !oldestDoc || !hasMore) return;
@@ -63,7 +81,7 @@ export function useDmMessages(localUid: string | null, partnerUid: string | null
     const q   = query(ref, orderBy('createdAt', 'desc'), startAfter(oldestDoc), limit(PAGE_SIZE));
 
     const snap  = await getDocs(q);
-    const older = snap.docs.reverse().map((d) => ({ id: d.id, ...d.data() } as Message));
+    const older = snap.docs.reverse().map((d) => ({ id: d.id, ...d.data() } as DirectMessage));
     setMessages((prev) => [...older, ...prev]);
     if (snap.docs.length > 0) setOldestDoc(snap.docs[snap.docs.length - 1]);
     setHasMore(snap.docs.length === PAGE_SIZE);
@@ -83,13 +101,13 @@ export async function sendDmMessage(
   // Ensure the DM conversation document exists
   const convRef = doc(db, 'directMessages', dmId);
   await setDoc(convRef, {
-    participantIds: [localUid, partnerUid].sort(),
-    updatedAt: serverTimestamp(),
+    participants: [localUid, partnerUid].sort(),
+    lastMessageAt: serverTimestamp(),
   }, { merge: true });
 
   await addDoc(collection(db, 'directMessages', dmId, 'messages'), {
     content,
-    authorId:    localUid,
+    senderId:    localUid,
     createdAt:   serverTimestamp(),
     editedAt:    null,
     attachments: [],
