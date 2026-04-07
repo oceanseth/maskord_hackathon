@@ -17,6 +17,7 @@ import type { VoiceParticipant } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
 import { useVoiceSettings } from '../../hooks/useVoiceSettings';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
+import { useMaskyVoice } from '../../hooks/useMaskyVoice';
 
 export interface VoiceContextValue {
   participants: VoiceParticipant[];
@@ -40,6 +41,10 @@ export interface VoiceContextValue {
   hangUp: () => void;
   /** Hot-swap the input device mid-call */
   updateInputDevice: (deviceId: string) => Promise<void>;
+  /** Replace the outgoing audio track in all peer connections (avatar voice injection) */
+  replaceAudioTrack: (track: MediaStreamTrack | null) => Promise<void>;
+  /** True while the avatar's synthesized voice is being transmitted */
+  isAvatarSpeaking: boolean;
   // DM calling
   isDmCall: boolean;
   dmCallPartnerId: string | null;
@@ -71,6 +76,8 @@ const VoiceCtx = createContext<VoiceContextValue>({
   toggleDeafen: () => {},
   hangUp: () => {},
   updateInputDevice: async () => {},
+  replaceAudioTrack: async () => {},
+  isAvatarSpeaking: false,
   isDmCall: false,
   dmCallPartnerId: null,
   dmCallStatus: null,
@@ -91,14 +98,23 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   const [localSpeaking, setLocalSpeaking]   = useState(false);
   const [needsInteraction, setNeedsInteraction] = useState(false);
   const [incomingCall, setIncomingCall]     = useState<{ callerId: string; callId: string } | null>(null);
+  const [isAvatarSpeaking, setIsAvatarSpeaking] = useState(false);
 
   const { settings, updateSettings, refreshDevices, inputs, outputs } = useVoiceSettings();
 
   const {
     participants, localStream, isMuted, isDeafened, isConnected,
-    join, leave, toggleMute, toggleDeafen, updateInputDevice, updateSpeakingState,
-    reconnectPeers,
+    join, leave, toggleMute, toggleDeafen, updateInputDevice, replaceAudioTrack,
+    updateSpeakingState, reconnectPeers,
   } = useVoiceChannel(voiceGuildId, voiceChannelId, userId);
+
+  useMaskyVoice({
+    uid:                   userId,
+    isConnected,
+    localStream,
+    replaceAudioTrack,
+    onAvatarSpeakingChange: setIsAvatarSpeaking,
+  });
 
   const isDmCall = voiceGuildId === '__dm__';
 
@@ -386,6 +402,8 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       toggleDeafen,
       hangUp,
       updateInputDevice,
+      replaceAudioTrack,
+      isAvatarSpeaking,
       isDmCall,
       dmCallPartnerId,
       dmCallStatus,

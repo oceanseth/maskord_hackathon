@@ -252,6 +252,18 @@ export function useVoiceChannel(
     setLocalStream(newStream);
   }, [localStream]);
 
+  // ─── Replace audio track in all peer connections ─────────────────────────────
+  // Used by the avatar voice system to inject synthesized audio mid-call.
+
+  const replaceAudioTrack = useCallback(async (newTrack: MediaStreamTrack | null) => {
+    const replacements: Promise<void>[] = [];
+    peerConnections.current.forEach((pc) => {
+      const sender = pc.getSenders().find((s) => s.track?.kind === 'audio');
+      if (sender) replacements.push(sender.replaceTrack(newTrack).catch(() => {}));
+    });
+    await Promise.all(replacements);
+  }, []);
+
   // ─── Speaking state → RTDB (for sidebar indicators) ─────────────────────────
 
   const updateSpeakingState = useCallback((speaking: boolean) => {
@@ -609,6 +621,7 @@ export function useVoiceChannel(
     toggleMute,
     toggleDeafen,
     updateInputDevice,
+    replaceAudioTrack,
     updateSpeakingState,
     reconnectPeers,
   };
