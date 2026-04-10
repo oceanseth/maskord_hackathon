@@ -11,6 +11,7 @@ let mainWindow: BrowserWindow | null = null;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    title: 'Maskord',
     width: 1280,
     height: 800,
     minWidth: 940,
