@@ -1,5 +1,6 @@
 import { useEffect, useMemo } from 'react';
-import { useAuth, useUserGuilds, createGuild, useUserProfiles } from '@maskord/shared';
+import { doc, updateDoc } from 'firebase/firestore';
+import { useAuth, useUserGuilds, createGuild, useUserProfiles, getFirebaseDb } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
 
 export default function GuildSidebar() {
@@ -25,6 +26,15 @@ export default function GuildSidebar() {
     if (guilds.length > 0) {
       // Already has a guild — record that so we never try to create again.
       localStorage.setItem(key, '1');
+      // Migration: backfill personalGuildId for users created before this field existed
+      if (!profile.personalGuildId) {
+        const ownedGuild = guilds.find((g) => g.ownerId === firebaseUser.uid);
+        if (ownedGuild) {
+          updateDoc(doc(getFirebaseDb(), 'users', firebaseUser.uid), {
+            personalGuildId: ownedGuild.id,
+          }).catch(() => {});
+        }
+      }
       return;
     }
 
@@ -33,7 +43,11 @@ export default function GuildSidebar() {
     localStorage.setItem(key, '1'); // set BEFORE the async call to prevent races
 
     createGuild(firebaseUser.uid, `${profile.displayName}'s server`)
-      .then((guildId) => {
+      .then(async (guildId) => {
+        // Persist the personal guild ID on the profile so friends can find this server
+        await updateDoc(doc(getFirebaseDb(), 'users', firebaseUser.uid), {
+          personalGuildId: guildId,
+        }).catch(() => {});
         // Only auto-navigate if the user hasn't already been sent somewhere
         // (e.g. via an invite link processed by App.tsx)
         if (!useAppStore.getState().activeGuildId) setActiveGuild(guildId);

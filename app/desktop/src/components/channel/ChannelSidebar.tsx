@@ -229,6 +229,7 @@ export default function ChannelSidebar({ guildId }: Props) {
   );
 
   function handleDragStart(e: DragStartEvent) {
+    if (!isOwner) return;
     isDragging.current = true;
     const aid = e.active.id as string;
     setActiveId(aid);
@@ -264,6 +265,7 @@ export default function ChannelSidebar({ guildId }: Props) {
   }
 
   async function handleDragEnd(e: DragEndEvent) {
+    if (!isOwner) return;
     isDragging.current = false;
     const { active, over } = e;
     setActiveId(null);
@@ -407,7 +409,7 @@ export default function ChannelSidebar({ guildId }: Props) {
         {/* Channel list */}
         <div className="flex-1 overflow-y-auto scrollable py-2">
           <DndContext
-            sensors={isOwner ? sensors : []}
+            sensors={sensors}
             collisionDetection={closestCenter}
             onDragStart={handleDragStart}
             onDragOver={handleDragOver}

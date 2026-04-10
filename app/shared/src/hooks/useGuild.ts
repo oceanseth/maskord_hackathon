@@ -263,3 +263,13 @@ export async function joinViaInvite(code: string): Promise<{ guildId: string; al
   const result = await fn({ code });
   return result.data;
 }
+
+// ─── Join a mutual friend's guild (Cloud Function) ───────────────────────────
+
+export async function joinGuildAsMutualFriend(guildId: string): Promise<{ guildId: string; alreadyMember: boolean }> {
+  const fn = httpsCallable<{ guildId: string }, { guildId: string; alreadyMember: boolean }>(
+    getFirebaseFunctions(), 'joinGuildAsMutualFriend',
+  );
+  const result = await fn({ guildId });
+  return result.data;
+}

@@ -5,7 +5,9 @@ import {
   useDmMessages,
   sendDmMessage,
   useFriendships,
+  useUserGuilds,
   dmChannelId,
+  joinGuildAsMutualFriend,
 } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
 import { useVoiceCtx } from './VoiceProvider';
@@ -27,7 +29,16 @@ function formatTs(ts: unknown): string {
 
 export default function DmPanel({ partnerUid }: Props) {
   const { firebaseUser, profile: myProfile } = useAuth();
-  const { closeDm } = useAppStore();
+  const { closeDm, setActiveGuild } = useAppStore();
+
+  // Find the partner's server.
+  // Primary: a mutual guild where they are the owner (we're already a member).
+  // Fallback: their personalGuildId stored on their profile (for mutual friends not yet joined).
+  const { guilds: myGuilds } = useUserGuilds(firebaseUser?.uid ?? null);
+  const partnerGuild = useMemo(
+    () => myGuilds.find((g) => g.ownerId === partnerUid) ?? null,
+    [myGuilds, partnerUid],
+  );
   const { startDmCall, isDmCall, dmCallPartnerId, dmCallStatus } = useVoiceCtx();
 
   const isCallWithPartner = isDmCall && dmCallPartnerId === partnerUid;
@@ -45,9 +56,20 @@ export default function DmPanel({ partnerUid }: Props) {
   const outgoing = pendingOutgoing.find((f) => f.uids.includes(partnerUid));
   const incoming = pendingIncoming.find((f) => f.uids.includes(partnerUid));
 
-  const [input,     setInput]     = useState('');
-  const [sending,   setSending]   = useState(false);
-  const [friendBusy, setFriendBusy] = useState(false);
+  // Resolve the guild ID and label to use for the server button.
+  // partnerGuild means we're already a member; personalGuildId is the fallback for mutual friends.
+  const partnerPersonalGuildId = useMemo(
+    () => profiles[partnerUid]?.personalGuildId ?? null,
+    [profiles, partnerUid],
+  );
+  const serverGuildId   = partnerGuild?.id ?? (isFriend ? partnerPersonalGuildId : null);
+  const serverGuildName = partnerGuild?.name
+    ?? `${profiles[partnerUid]?.displayName ?? profiles[partnerUid]?.twitchUsername ?? 'their'}'s server`;
+
+  const [input,       setInput]       = useState('');
+  const [sending,     setSending]     = useState(false);
+  const [friendBusy,  setFriendBusy]  = useState(false);
+  const [joiningGuild, setJoiningGuild] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef  = useRef<HTMLInputElement>(null);
 
@@ -128,6 +150,40 @@ export default function DmPanel({ partnerUid }: Props) {
             </p>
           )}
         </div>
+
+        {/* Partner's server button — shown if already a member, or mutual friends */}
+        {serverGuildId && (
+          <button
+            disabled={joiningGuild}
+            onClick={async () => {
+              if (partnerGuild) {
+                // Already a member — navigate directly
+                setActiveGuild(serverGuildId);
+                closeDm();
+              } else {
+                // Mutual friend, not yet a member — join first
+                setJoiningGuild(true);
+                try {
+                  await joinGuildAsMutualFriend(serverGuildId);
+                  setActiveGuild(serverGuildId);
+                  closeDm();
+                } catch {
+                  // Permission error or network issue — navigate anyway (user will see preview)
+                  setActiveGuild(serverGuildId);
+                  closeDm();
+                } finally {
+                  setJoiningGuild(false);
+                }
+              }
+            }}
+            title={joiningGuild ? 'Joining…' : `Go to ${serverGuildName}`}
+            className="flex-shrink-0 text-[#6b7280] hover:text-violet-300 disabled:opacity-50 transition-colors"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z" />
+            </svg>
+          </button>
+        )}
 
         {/* Call button / status */}
         {isCallWithPartner ? (

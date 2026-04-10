@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { collection, query, where, onSnapshot, Timestamp } from 'firebase/firestore';
+import { collection, query, where, getDocs, Timestamp } from 'firebase/firestore';
 import { getFirebaseDb } from '@maskord/shared';
 import type { DirectMessageConversation } from '@maskord/shared';
 
@@ -22,15 +22,19 @@ export function saveDmLastSeen(convId: string, ts: number = Date.now()) {
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 /**
- * Tracks unread DM message counts per conversation using localStorage timestamps.
- * Subscribes to Firestore messages since lastSeen for each conversation.
+ * Counts unread DM messages per conversation.
+ *
+ * Uses one-time getDocs fetches (not persistent listeners) to avoid security-rule
+ * edge cases with get()-based subcollection rules.  Counts refresh automatically
+ * whenever conversations update (i.e. lastMessageAt changes on the conv doc),
+ * and immediately when markSeen is called.
  */
 export function useDmUnread(
   myUid: string | null,
   conversations: DirectMessageConversation[],
 ): { counts: Record<string, number>; markSeen: (convId: string) => void } {
   const [counts, setCounts] = useState<Record<string, number>>({});
-  // Bumped whenever markSeen is called, to force re-subscription with new lastSeen
+  // Bumping seenVersion forces an immediate re-fetch after markSeen
   const [seenVersion, setSeenVersion] = useState(0);
 
   const markSeen = useCallback((convId: string) => {
@@ -39,38 +43,49 @@ export function useDmUnread(
     setSeenVersion((v) => v + 1);
   }, []);
 
-  // Stable signature — only changes when conversation IDs change, not on every message
-  const convSignature = conversations.map((c) => c.id).join(',');
+  // Include lastMessageAt so counts refresh whenever a new message arrives
+  // (useDmConversations already updates lastMessageAt via its onSnapshot)
+  const convSignature = conversations
+    .map((c) => `${c.id}:${(c.lastMessageAt as { seconds?: number })?.seconds ?? 0}`)
+    .join(',');
 
   useEffect(() => {
     if (!myUid || conversations.length === 0) return;
 
+    let cancelled = false;
     const db = getFirebaseDb();
-    const unsubs: Array<() => void> = [];
 
-    for (const conv of conversations) {
-      const lastSeen = loadLastSeen(conv.id);
-      const convId = conv.id;
+    async function fetchCounts() {
+      const newCounts: Record<string, number> = {};
 
-      const q = lastSeen > 0
-        ? query(
-            collection(db, 'directMessages', convId, 'messages'),
-            where('createdAt', '>', Timestamp.fromMillis(lastSeen)),
-          )
-        : query(collection(db, 'directMessages', convId, 'messages'));
+      await Promise.all(
+        conversations.map(async (conv) => {
+          const lastSeen = loadLastSeen(conv.id);
+          try {
+            const q = lastSeen > 0
+              ? query(
+                  collection(db, 'directMessages', conv.id, 'messages'),
+                  where('createdAt', '>', Timestamp.fromMillis(lastSeen)),
+                )
+              : query(collection(db, 'directMessages', conv.id, 'messages'));
 
-      const unsub = onSnapshot(q, (snap) => {
-        const count = snap.docs.filter((d) => {
-          const data = d.data();
-          return (data.senderId || data.authorId) !== myUid;
-        }).length;
-        setCounts((prev) => ({ ...prev, [convId]: count }));
-      });
+            const snap = await getDocs(q);
+            newCounts[conv.id] = snap.docs.filter((d) => {
+              const data = d.data();
+              return (data.senderId || data.authorId) !== myUid;
+            }).length;
+          } catch {
+            // Permission errors or network issues — treat as 0 (best-effort)
+            newCounts[conv.id] = 0;
+          }
+        }),
+      );
 
-      unsubs.push(unsub);
+      if (!cancelled) setCounts(newCounts);
     }
 
-    return () => { unsubs.forEach((u) => u()); };
+    fetchCounts();
+    return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myUid, convSignature, seenVersion]);
 

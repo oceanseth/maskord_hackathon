@@ -21,6 +21,8 @@ export interface User {
   // Twitch-specific fields written by twitchOAuth Cloud Function
   twitchId?: string;
   twitchUsername?: string;
+  /** ID of the user's auto-created personal server, set when the guild is first created. */
+  personalGuildId?: string;
 }
 
 export type UserStatus = 'online' | 'idle' | 'dnd' | 'offline';

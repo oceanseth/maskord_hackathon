@@ -295,6 +295,83 @@ export const joinGuildWithInvite = onCall(async (request) => {
   return { guildId, alreadyMember: false };
 });
 
+// ─── Join Guild as Mutual Friend ──────────────────────────────────────────────
+
+export const joinGuildAsMutualFriend = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+  const { guildId } = request.data as { guildId: string };
+  if (!guildId) throw new HttpsError('invalid-argument', 'guildId required');
+
+  const userId = request.auth.uid;
+
+  // Get the guild to find its owner
+  const guildSnap = await db.doc(`guilds/${guildId}`).get();
+  if (!guildSnap.exists) throw new HttpsError('not-found', 'Guild not found');
+  const ownerId = guildSnap.data()!.ownerId as string;
+
+  // Verify the requester is a mutual friend of the owner.
+  // Friendship ID uses sorted UIDs: [uid1, uid2].sort().join('__')
+  const fId = [userId, ownerId].sort().join('__');
+  const friendshipSnap = await db.doc(`friendships/${fId}`).get();
+  if (!friendshipSnap.exists || friendshipSnap.data()!.status !== 'accepted') {
+    throw new HttpsError('permission-denied', 'Must be a mutual friend of the server owner to join');
+  }
+
+  // Already a member — idempotent
+  const memberSnap = await db.doc(`guilds/${guildId}/members/${userId}`).get();
+  if (memberSnap.exists) {
+    return { guildId, alreadyMember: true };
+  }
+
+  // Get @everyone role id
+  const rolesSnap = await db.collection(`guilds/${guildId}/roles`)
+    .where('name', '==', '@everyone').limit(1).get();
+  const everyoneRoleId = rolesSnap.docs[0]?.id ?? '';
+
+  const batch = db.batch();
+
+  // Add member
+  batch.set(db.doc(`guilds/${guildId}/members/${userId}`), {
+    nickname: null,
+    roles: [everyoneRoleId],
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+    muted: false,
+    deafened: false,
+    pending: false,
+  });
+
+  // Mirror in members_index
+  batch.set(db.doc(`members_index/${guildId}_${userId}`), {
+    guildId,
+    userId,
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Post system join message in first text channel
+  const firstTextChannel = await db.collection(`guilds/${guildId}/channels`)
+    .where('type', '==', 'text').orderBy('position').limit(1).get();
+
+  if (!firstTextChannel.empty) {
+    const channelId = firstTextChannel.docs[0].id;
+    batch.set(db.collection(`guilds/${guildId}/channels/${channelId}/messages`).doc(), {
+      content: '',
+      authorId: userId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      editedAt: null,
+      attachments: [],
+      reactions: {},
+      mentions: [],
+      pinned: false,
+      type: 'system_join',
+    });
+  }
+
+  await batch.commit();
+
+  return { guildId, alreadyMember: false };
+});
+
 // ─── Leave Guild ──────────────────────────────────────────────────────────────
 
 export const leaveGuild = onCall(async (request) => {
