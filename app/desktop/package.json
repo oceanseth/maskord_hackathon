@@ -55,19 +55,18 @@
     "mac": {
       "category": "public.app-category.social-networking",
       "target": [
-        {
-          "target": "dir",
-          "arch": [
-            "arm64"
-          ]
-        }
-      ]
+        { "target": "dmg", "arch": ["arm64"] },
+        { "target": "dmg", "arch": ["x64"] }
+      ],
+      "artifactName": "Maskord-mac-${arch}.dmg"
     },
     "win": {
-      "target": "nsis"
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "artifactName": "Maskord-win-setup.exe"
     },
     "linux": {
-      "target": "AppImage"
+      "target": [{ "target": "AppImage", "arch": ["x64"] }],
+      "artifactName": "Maskord-linux.AppImage"
     }
   }
 }
