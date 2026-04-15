@@ -44,6 +44,7 @@ firebase/functions/lib/
 # Electron
 app/desktop/release/
 app/desktop/dist-electron/
+app/desktop/dist-web/
 
 # OS
 .DS_Store
