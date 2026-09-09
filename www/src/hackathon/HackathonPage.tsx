@@ -129,10 +129,10 @@ function Hero() {
             See the six plans
           </a>
           <a
-            href="https://maskord.com"
+            href="/server"
             className="w-full sm:w-auto px-8 py-4 rounded-xl border border-maskord-border hover:border-violet-700/60 text-maskord-text font-semibold transition-all hover:bg-maskord-surface"
           >
-            Open Maskord →
+            Open your Server →
           </a>
         </div>
 
