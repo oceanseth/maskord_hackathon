@@ -48,26 +48,22 @@ working: the challenge brief names `convex.site` specifically, so it is the
 eligibility evidence to cite in the submission even if a custom domain is
 also pointed at it.
 
-## Pointing hackathon.maskord.com at it
+## How the vanity domains work
 
-Two ways, and they differ in cost:
+hackathon.masky.ai and hackathon.maskord.com both resolve to CloudFront
+distribution `E23OQTGY3MVJNY`, whose only origin is `<deployment>.convex.site`.
+Convex serves every byte; CloudFront exists solely to terminate TLS for the two
+vanity hostnames, using one DNS-validated ACM certificate in us-east-1 that
+covers both names. Route 53 zones: `masky.ai` and `maskord.com`.
 
-**A. Convex custom domain — requires a Convex Pro plan.**
-Deployment Settings → Custom Domains → add `hackathon.maskord.com`. Convex then
-shows the DNS records to create; add them in Route 53 zone
-`Z08097413E7LZC3FNHC9X`. Convex mints the certificate itself, so the ACM
-certificate below is not used. Override `CONVEX_SITE_URL` to the custom domain.
-See https://docs.convex.dev/production/custom-domains
+The alternative — Convex's own custom-domain feature — was not used because it
+[requires a Convex Pro plan](https://docs.convex.dev/production/custom-domains).
+If you switch to it later, Convex mints its own certificate and the ACM one
+becomes unnecessary; override `CONVEX_SITE_URL` to the custom domain.
 
-**B. CloudFront in front of Convex — no Convex plan needed.**
-A CloudFront distribution with alias `hackathon.maskord.com` and a custom origin
-of `<deployment>.convex.site`, using the already-issued ACM certificate
-`arn:aws:acm:us-east-1:218827615080:certificate/7a5bdcda-e57d-402b-b8e8-fb5e1829a293`
-(us-east-1, DNS-validated in the maskord.com zone). Convex still serves every
-byte; CloudFront only terminates TLS for the vanity hostname.
-
-Either way the Route 53 record cannot be created until the Convex deployment
-exists — there is no target hostname before that.
+Either way, cite the raw `*.convex.site` URL as the challenge eligibility
+evidence — the brief names `convex.site` specifically, and a custom domain in
+front of it is presentation rather than proof.
 
 ## Notes
 
