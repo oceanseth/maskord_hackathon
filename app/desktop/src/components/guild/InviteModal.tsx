@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { createInvite, useGuildChannels } from '@maskord/shared';
 import Modal from '../ui/Modal';
+import { inviteUrl as buildInviteUrl } from '../../lib/appUrl';
 
 interface Props {
   guildId: string;
@@ -43,7 +44,7 @@ export default function InviteModal({ guildId, inviterId, onClose }: Props) {
       .finally(() => setLoading(false));
   }, [guildId, firstTextChannel?.id, inviterId]);
 
-  const inviteUrl = code ? `https://www.maskord.com/app?invite=${code}` : '';
+  const inviteUrl = code ? buildInviteUrl(code) : '';
 
   function handleCopy() {
     if (!inviteUrl) return;

@@ -3,6 +3,7 @@ import { useAuth, useUserProfiles, createInvite } from '@maskord/shared';
 import { useVoiceCtx } from './VoiceProvider';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
 import Modal from '../ui/Modal';
+import { inviteUrl as buildInviteUrl } from '../../lib/appUrl';
 
 interface Props {
   guildId: string;
@@ -509,7 +510,7 @@ function InviteTile({ guildId, channelId, inviterId }: { guildId: string; channe
     setError(null);
     try {
       const code = await createInvite(guildId, channelId, inviterId);
-      setInviteUrl(`https://www.maskord.com/app?invite=${code}&vc=${channelId}`);
+      setInviteUrl(buildInviteUrl(code, channelId));
     } catch {
       setError('Failed to generate invite link. Please try again.');
     } finally {

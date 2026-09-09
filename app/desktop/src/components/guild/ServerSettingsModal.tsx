@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { updateGuildSettings, uploadGuildIcon, createInvite } from '@maskord/shared';
 import Modal from '../ui/Modal';
+import { inviteUrl as buildInviteUrl } from '../../lib/appUrl';
 
 interface Props {
   guildId: string;
@@ -79,7 +80,7 @@ export default function ServerSettingsModal({ guildId, currentName, currentIconU
     try {
       // channelId stored for record-keeping but navigation uses only guildId
       const code = await createInvite(guildId, '', inviterId, { expiresInHours: 24 });
-      setInviteUrl(`https://www.maskord.com/app?invite=${code}`);
+      setInviteUrl(buildInviteUrl(code));
     } catch (err) {
       setInviteError(err instanceof Error ? err.message : 'Failed to generate link');
     } finally {
