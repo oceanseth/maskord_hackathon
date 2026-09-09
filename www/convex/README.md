@@ -8,12 +8,18 @@ Convex as well as to S3 + CloudFront.
 
 `npx convex login` opens a browser, so it cannot run in a headless session —
 it has to be done once by a human on the machine that owns the Convex account.
+The project also has to be created before deploying: without it the deploy
+stops at `No CONVEX_DEPLOYMENT set`.
 
 ```bash
 cd www
-npx convex login          # once, interactive
-npm run deploy:convex     # builds www, deploys the backend, uploads dist/
+npx convex login                                              # once, interactive
+npx convex dev --once --configure new --project maskord-hackathon  # writes .env.local
+npm run deploy:convex                                         # builds www, deploys, uploads dist/
 ```
+
+`deploy:convex` also works from the repo root, which forwards to the `www`
+workspace.
 
 The site is then live at `https://<deployment>.convex.site`. Keep that URL
 working: the challenge brief names `convex.site` specifically, so it is the
