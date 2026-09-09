@@ -10,6 +10,7 @@
 
 import type * as messages from "../messages.js";
 import type * as presence from "../presence.js";
+import type * as servers from "../servers.js";
 
 import type {
   ApiFromModules,
@@ -20,6 +21,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   messages: typeof messages;
   presence: typeof presence;
+  servers: typeof servers;
 }>;
 
 /**
