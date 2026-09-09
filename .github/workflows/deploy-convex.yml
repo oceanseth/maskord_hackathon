@@ -1,0 +1,55 @@
+name: Deploy to Convex
+
+# Pushing to main publishes the site to the prod Convex deployment, which is
+# what hackathon.maskord.com serves. Nothing here touches maskord.com — see
+# .github/workflows/README.md for why the upstream workflows were removed.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'www/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/deploy-convex.yml'
+  workflow_dispatch:
+
+# Never let two deploys race for the same production deployment.
+concurrency:
+  group: convex-prod
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - run: npm ci
+
+      # `convex deploy` pushes schema and functions; `static-hosting upload`
+      # builds www and publishes dist/ to the same deployment. The upload step
+      # cannot resolve the component without --build, so keep that flag.
+      - name: Deploy backend and publish site
+        working-directory: www
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+        run: |
+          npx convex deploy
+          npx @convex-dev/static-hosting upload --build --prod -d ./dist
+
+      - name: Summary
+        run: |
+          echo "### Deployed" >> $GITHUB_STEP_SUMMARY
+          echo "- https://hackathon.maskord.com" >> $GITHUB_STEP_SUMMARY
+          echo "- https://impressive-skunk-614.convex.site (Convex origin)" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY

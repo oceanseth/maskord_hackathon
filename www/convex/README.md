@@ -48,13 +48,12 @@ working: the challenge brief names `convex.site` specifically, so it is the
 eligibility evidence to cite in the submission even if a custom domain is
 also pointed at it.
 
-## How the vanity domains work
+## How the vanity domain works
 
-hackathon.masky.ai and hackathon.maskord.com both resolve to CloudFront
-distribution `E23OQTGY3MVJNY`, whose only origin is `<deployment>.convex.site`.
-Convex serves every byte; CloudFront exists solely to terminate TLS for the two
-vanity hostnames, using one DNS-validated ACM certificate in us-east-1 that
-covers both names. Route 53 zones: `masky.ai` and `maskord.com`.
+hackathon.maskord.com resolves to CloudFront distribution `E23OQTGY3MVJNY`,
+whose only origin is `<deployment>.convex.site`. Convex serves every byte;
+CloudFront exists solely to terminate TLS for the vanity hostname, using a
+DNS-validated ACM certificate in us-east-1. Route 53 zone: `maskord.com`.
 
 The alternative — Convex's own custom-domain feature — was not used because it
 [requires a Convex Pro plan](https://docs.convex.dev/production/custom-domains).

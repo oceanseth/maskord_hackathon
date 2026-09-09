@@ -3,7 +3,7 @@
 Maskord's Burning Token 2026 fork. Forked from `oceanseth/maskord` so sponsor
 integrations can be built, and abandoned, without touching the product repo.
 
-- **Live:** https://hackathon.masky.ai and https://hackathon.maskord.com
+- **Live:** https://hackathon.maskord.com
 - **Convex origin:** https://impressive-skunk-614.convex.site
 - **Sponsor plan:** the site root — what each sponsor does inside Maskord, the
   official entry requirement it satisfies, and how a judge verifies it.
@@ -22,11 +22,14 @@ integrations can be built, and abandoned, without touching the product repo.
 
 ## Deploying
 
+Push to `main`. Anything touching `www/` publishes to the prod Convex
+deployment, which is what hackathon.maskord.com serves — see
+`.github/workflows/README.md`.
+
+By hand, if needed:
+
 ```bash
 cd www
 npx convex deploy -y
 npx @convex-dev/static-hosting upload --build --prod -d ./dist
-aws cloudfront create-invalidation --distribution-id E23OQTGY3MVJNY --paths "/*"
 ```
-
-CI deploys are deliberately absent — see `.github/workflows/README.md`.
