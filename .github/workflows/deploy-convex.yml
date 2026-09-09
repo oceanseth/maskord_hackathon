@@ -36,16 +36,17 @@ jobs:
 
       - run: npm ci
 
-      # `convex deploy` pushes schema and functions; `static-hosting upload`
-      # builds www and publishes dist/ to the same deployment. The upload step
-      # cannot resolve the component without --build, so keep that flag.
+      # The build is run explicitly rather than via `upload --build`: that flag
+      # runs vite itself and skips www's build script, which is what folds the
+      # Maskord client into dist/app.
       - name: Deploy backend and publish site
         working-directory: www
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: |
           npx convex deploy
-          npx @convex-dev/static-hosting upload --build --prod -d ./dist
+          npm run build
+          npx @convex-dev/static-hosting upload --prod -d ./dist
 
       - name: Summary
         run: |

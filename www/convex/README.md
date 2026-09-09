@@ -15,11 +15,11 @@ setup and is unused. Delete it from the dashboard if it is in the way.
 ```bash
 cd www
 npx convex deploy -y
-npx @convex-dev/static-hosting upload --build --prod -d ./dist
+npm run build
+npx @convex-dev/static-hosting upload --prod -d ./dist
 aws cloudfront create-invalidation --distribution-id E23OQTGY3MVJNY --paths "/*"
 ```
 
-`upload` without `--build` fails to resolve the component; keep the flag.
 
 
 The Convex "Multiplayer" challenge requires the frontend to be deployed on

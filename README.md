@@ -39,5 +39,6 @@ By hand, if needed:
 ```bash
 cd www
 npx convex deploy -y
-npx @convex-dev/static-hosting upload --build --prod -d ./dist
+npm run build
+npx @convex-dev/static-hosting upload --prod -d ./dist
 ```

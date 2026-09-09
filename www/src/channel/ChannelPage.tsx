@@ -45,7 +45,7 @@ export default function ChannelPage() {
           right={
             <>
               <a
-                href="/app/"
+                href="/app/index.html"
                 className="hidden sm:inline px-3 py-1.5 rounded-lg bg-maskord-accent hover:bg-violet-500 text-white text-xs font-medium transition-colors"
               >
                 Open your server

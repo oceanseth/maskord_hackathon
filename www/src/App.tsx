@@ -13,9 +13,10 @@ import ChannelPage from './channel/ChannelPage';
 // hackathon page is the whole point of the host. Both fall back to index.html
 // for unknown paths, so routing is decided here.
 //
-// /app/ is not handled here at all: the Maskord client is a separate build
-// published under dist/app, so a request for it hits a real file. Only the
-// slashless /app and the older /server land here, and both redirect.
+// The Maskord client is a separate build published under dist/app. Convex
+// Static Hosting resolves exact files only — /app/index.html is served, but
+// /app/ falls through to this bundle — so /app and /server redirect to the
+// real file rather than pretending directory indexes work.
 function route(hostname: string, pathname: string) {
   const host = hostname.toLowerCase();
   const path = pathname.replace(/\/+$/, '').toLowerCase();
@@ -30,7 +31,7 @@ export default function App() {
   const page = route(window.location.hostname, window.location.pathname);
 
   if (page === 'app') {
-    window.location.replace('/app/');
+    window.location.replace('/app/index.html');
     return null;
   }
 
