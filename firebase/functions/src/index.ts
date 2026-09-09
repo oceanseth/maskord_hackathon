@@ -1,10 +1,214 @@
 import * as admin from 'firebase-admin';
-import { onCall, HttpsError } from 'firebase-functions/v2/https';
+import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
 import { onDocumentDeleted } from 'firebase-functions/v2/firestore';
 import { onValueDeleted } from 'firebase-functions/v2/database';
+import { defineSecret } from 'firebase-functions/params';
 
 admin.initializeApp();
 const db = admin.firestore();
+
+// ─── Twitch OAuth ─────────────────────────────────────────────────────────────
+
+const twitchClientSecret = defineSecret('TWITCH_CLIENT_SECRET');
+
+const TWITCH_CLIENT_ID = 'sgb17aslo6gesnetuqfnf6qql6jrae';
+
+const ALLOWED_REDIRECT_URIS = [
+  'http://localhost:2468',           // Electron desktop app
+  'https://www.maskord.com/app',     // Web app (production)
+  'https://maskord.com/app',         // Web app (apex — redirects to www)
+];
+
+export const twitchOAuth = onRequest(
+  {
+    cors: ['https://www.maskord.com', 'https://maskord.com', /^http:\/\/localhost(:\d+)?$/],
+    secrets: [twitchClientSecret],
+  },
+  async (req, res) => {
+    if (req.method !== 'POST') { res.status(405).send('Method Not Allowed'); return; }
+
+    const { code, redirectUri = 'http://localhost:2468' } = req.body as { code?: string; redirectUri?: string };
+    if (!code) { res.status(400).json({ error: 'missing code' }); return; }
+    if (!ALLOWED_REDIRECT_URIS.includes(redirectUri)) {
+      res.status(400).json({ error: 'invalid redirect URI' });
+      return;
+    }
+
+    const clientId     = TWITCH_CLIENT_ID;
+    const clientSecret = twitchClientSecret.value();
+
+    // Exchange authorization code for access token
+    const tokenRes = await fetch('https://id.twitch.tv/oauth2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id:     clientId,
+        client_secret: clientSecret,
+        code,
+        grant_type:    'authorization_code',
+        redirect_uri:  redirectUri,
+      }),
+    });
+
+    if (!tokenRes.ok) {
+      const err = await tokenRes.text();
+      console.error('Twitch token exchange failed:', err);
+      res.status(502).json({ error: 'token exchange failed' });
+      return;
+    }
+
+    const { access_token: accessToken } = await tokenRes.json() as { access_token: string };
+
+    // Fetch Twitch user info
+    const userRes = await fetch('https://api.twitch.tv/helix/users', {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Client-Id':   clientId,
+      },
+    });
+
+    if (!userRes.ok) { res.status(502).json({ error: 'failed to fetch twitch user' }); return; }
+
+    const { data: [twitchUser] } = await userRes.json() as {
+      data: Array<{ id: string; login: string; display_name: string; profile_image_url: string; email?: string }>;
+    };
+
+    const uid = `twitch:${twitchUser.id}`;
+
+    // Create Firebase Auth user if new
+    try {
+      await admin.auth().getUser(uid);
+    } catch {
+      await admin.auth().createUser({
+        uid,
+        displayName: twitchUser.display_name,
+        photoURL:    twitchUser.profile_image_url,
+        ...(twitchUser.email ? { email: twitchUser.email } : {}),
+      });
+    }
+
+    // Upsert Firestore user doc (same schema as maskord users collection)
+    await db.collection('users').doc(uid).set({
+      displayName:    twitchUser.display_name,
+      avatarUrl:      twitchUser.profile_image_url,
+      twitchId:       twitchUser.id,
+      twitchUsername: twitchUser.login,
+      ...(twitchUser.email ? { email: twitchUser.email } : {}),
+    }, { merge: true });
+
+    const customToken = await admin.auth().createCustomToken(uid, {
+      provider:   'twitch',
+      twitchId:   twitchUser.id,
+    });
+
+    res.json({ firebaseToken: customToken, twitchId: twitchUser.id, displayName: twitchUser.display_name });
+  },
+);
+
+// ─── Create Guild ─────────────────────────────────────────────────────────────
+
+// DEFAULT_PERMISSIONS = VIEW_CHANNEL|SEND_MESSAGES|READ_MESSAGE_HISTORY|EMBED_LINKS|ATTACH_FILES|ADD_REACTIONS|CONNECT|SPEAK
+const DEFAULT_PERMISSIONS = 1 | 2 | 4 | 16 | 32 | 64 | 128 | 256; // 503
+
+export const createGuildFn = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+  const { name } = request.data as { name: string };
+  if (!name?.trim()) throw new HttpsError('invalid-argument', 'name required');
+
+  const ownerId = request.auth.uid;
+
+  // Server-side idempotency: if user already has a personal guild, return it.
+  const userSnap = await db.doc(`users/${ownerId}`).get();
+  const existingGuildId = userSnap.data()?.personalGuildId as string | undefined;
+  if (existingGuildId) {
+    const guildSnap = await db.doc(`guilds/${existingGuildId}`).get();
+    if (guildSnap.exists) return { guildId: existingGuildId };
+    // Guild was deleted — clear the stale field and fall through to recreate
+    await db.doc(`users/${ownerId}`).update({ personalGuildId: admin.firestore.FieldValue.delete() });
+  }
+
+  const batch = db.batch();
+
+  // Create guild
+  const guildRef = db.collection('guilds').doc();
+  batch.set(guildRef, {
+    name: name.trim(),
+    description: '',
+    iconUrl: '',
+    ownerId,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    vanityCode: null,
+    settings: {
+      defaultNotifications: 'all',
+      explicitContentFilter: 'disabled',
+      verificationLevel: 'none',
+    },
+  });
+
+  const guildId = guildRef.id;
+
+  // Create @everyone role
+  const everyoneRoleRef = db.collection(`guilds/${guildId}/roles`).doc();
+  batch.set(everyoneRoleRef, {
+    name: '@everyone',
+    color: '#99AAB5',
+    permissions: DEFAULT_PERMISSIONS,
+    position: 0,
+    hoist: false,
+    mentionable: false,
+  });
+
+  // Add owner as member
+  batch.set(db.doc(`guilds/${guildId}/members/${ownerId}`), {
+    nickname: null,
+    roles: [everyoneRoleRef.id],
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+    muted: false,
+    deafened: false,
+    pending: false,
+  });
+
+  // Mirror in members_index
+  batch.set(db.doc(`members_index/${guildId}_${ownerId}`), {
+    guildId,
+    userId: ownerId,
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Default text channel
+  const textChannelRef = db.collection(`guilds/${guildId}/channels`).doc();
+  batch.set(textChannelRef, {
+    name: 'general',
+    type: 'text',
+    position: 0,
+    topic: 'General discussion',
+    slowmode: 0,
+    nsfw: false,
+    parentId: null,
+    permissionOverwrites: {},
+  });
+
+  // Default voice channel
+  const voiceChannelRef = db.collection(`guilds/${guildId}/channels`).doc();
+  batch.set(voiceChannelRef, {
+    name: 'General',
+    type: 'voice',
+    position: 1,
+    topic: null,
+    slowmode: 0,
+    nsfw: false,
+    parentId: null,
+    permissionOverwrites: {},
+  });
+
+  // Record personalGuildId on user doc so future calls return early
+  batch.set(db.doc(`users/${ownerId}`), { personalGuildId: guildId }, { merge: true });
+
+  await batch.commit();
+
+  return { guildId };
+});
 
 // ─── Join Guild via Invite ────────────────────────────────────────────────────
 
@@ -68,6 +272,83 @@ export const joinGuildWithInvite = onCall(async (request) => {
   });
 
   // Post system message
+  const firstTextChannel = await db.collection(`guilds/${guildId}/channels`)
+    .where('type', '==', 'text').orderBy('position').limit(1).get();
+
+  if (!firstTextChannel.empty) {
+    const channelId = firstTextChannel.docs[0].id;
+    batch.set(db.collection(`guilds/${guildId}/channels/${channelId}/messages`).doc(), {
+      content: '',
+      authorId: userId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      editedAt: null,
+      attachments: [],
+      reactions: {},
+      mentions: [],
+      pinned: false,
+      type: 'system_join',
+    });
+  }
+
+  await batch.commit();
+
+  return { guildId, alreadyMember: false };
+});
+
+// ─── Join Guild as Mutual Friend ──────────────────────────────────────────────
+
+export const joinGuildAsMutualFriend = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+  const { guildId } = request.data as { guildId: string };
+  if (!guildId) throw new HttpsError('invalid-argument', 'guildId required');
+
+  const userId = request.auth.uid;
+
+  // Get the guild to find its owner
+  const guildSnap = await db.doc(`guilds/${guildId}`).get();
+  if (!guildSnap.exists) throw new HttpsError('not-found', 'Guild not found');
+  const ownerId = guildSnap.data()!.ownerId as string;
+
+  // Verify the requester is a mutual friend of the owner.
+  // Friendship ID uses sorted UIDs: [uid1, uid2].sort().join('__')
+  const fId = [userId, ownerId].sort().join('__');
+  const friendshipSnap = await db.doc(`friendships/${fId}`).get();
+  if (!friendshipSnap.exists || friendshipSnap.data()!.status !== 'accepted') {
+    throw new HttpsError('permission-denied', 'Must be a mutual friend of the server owner to join');
+  }
+
+  // Already a member — idempotent
+  const memberSnap = await db.doc(`guilds/${guildId}/members/${userId}`).get();
+  if (memberSnap.exists) {
+    return { guildId, alreadyMember: true };
+  }
+
+  // Get @everyone role id
+  const rolesSnap = await db.collection(`guilds/${guildId}/roles`)
+    .where('name', '==', '@everyone').limit(1).get();
+  const everyoneRoleId = rolesSnap.docs[0]?.id ?? '';
+
+  const batch = db.batch();
+
+  // Add member
+  batch.set(db.doc(`guilds/${guildId}/members/${userId}`), {
+    nickname: null,
+    roles: [everyoneRoleId],
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+    muted: false,
+    deafened: false,
+    pending: false,
+  });
+
+  // Mirror in members_index
+  batch.set(db.doc(`members_index/${guildId}_${userId}`), {
+    guildId,
+    userId,
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  // Post system join message in first text channel
   const firstTextChannel = await db.collection(`guilds/${guildId}/channels`)
     .where('type', '==', 'text').orderBy('position').limit(1).get();
 
@@ -159,6 +440,106 @@ export const onMemberDeleted = onDocumentDeleted(
     await db.doc(`members_index/${guildId}_${userId}`).delete().catch(() => {});
   },
 );
+
+// ─── TURN Credentials ─────────────────────────────────────────────────────────
+// Returns ICE server config (STUN + TURN) for WebRTC NAT traversal.
+//
+// Setup — create Firestore document at _config/turn (no redeploy needed):
+//
+//   Self-hosted coturn (free — see coturn setup below):
+//     { "provider": "static", "servers": [
+//         { "urls": "stun:stun.l.google.com:19302" },
+//         { "urls": ["turn:YOUR_IP:3478","turn:YOUR_IP:443?transport=tcp"],
+//           "username": "maskord", "credential": "YOUR_PASSWORD" }
+//     ]}
+//
+//   Cloudflare TURN (1TB/month free — no server to manage):
+//     cloudflare.com → Calls → TURN → Create key → copy Key ID + API token
+//     { "provider": "cloudflare", "keyId": "...", "apiToken": "..." }
+//
+//   Metered.ca (1GB/month free):
+//     { "provider": "metered", "apiKey": "...", "appName": "..." }
+//
+//   Also add a Firestore security rule:
+//     match /_config/{doc=**} { allow read, write: if false; }
+//
+// Without config, falls back to STUN-only (same-network calls work; cross-network
+// calls behind symmetric NAT will fail).
+
+// Module-level cache — credentials last 24h; refresh after 23h.
+let cachedTurnServers: unknown[] | null = null;
+let turnCacheTimestamp = 0;
+const TURN_CACHE_TTL = 23 * 60 * 60 * 1000;
+
+export const getTurnCredentials = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+  // Serve from in-memory cache if still fresh
+  if (cachedTurnServers && Date.now() - turnCacheTimestamp < TURN_CACHE_TTL) {
+    return cachedTurnServers;
+  }
+
+  // Read provider config from Firestore (_config/turn — admin SDK bypasses rules)
+  try {
+    const snap = await db.doc('_config/turn').get();
+    const cfg = snap.data() as {
+      provider?: string;
+      // Cloudflare
+      keyId?: string; apiToken?: string;
+      // Metered.ca
+      apiKey?: string; appName?: string;
+      // Static / self-hosted coturn
+      servers?: unknown[];
+    } | undefined;
+
+    if (cfg?.provider === 'cloudflare' && cfg.keyId && cfg.apiToken) {
+      const res = await fetch(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${cfg.keyId}/credentials/generate`,
+        {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${cfg.apiToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ttl: 86400 }),
+        },
+      );
+      if (res.ok) {
+        const data = await res.json() as { iceServers: unknown[] };
+        cachedTurnServers = data.iceServers;
+        turnCacheTimestamp = Date.now();
+        console.log('[getTurnCredentials] Returning Cloudflare TURN credentials');
+        return cachedTurnServers;
+      }
+      console.warn('[getTurnCredentials] Cloudflare API returned', res.status, await res.text());
+
+    } else if (cfg?.provider === 'metered' && cfg.apiKey && cfg.appName) {
+      const res = await fetch(
+        `https://${cfg.appName}.metered.live/api/v1/turn/credentials?apiKey=${cfg.apiKey}`,
+      );
+      if (res.ok) {
+        cachedTurnServers = await res.json() as unknown[];
+        turnCacheTimestamp = Date.now();
+        console.log('[getTurnCredentials] Returning Metered.ca TURN credentials');
+        return cachedTurnServers;
+      }
+      console.warn('[getTurnCredentials] Metered.ca API returned', res.status);
+
+    } else if (cfg?.provider === 'static' && Array.isArray(cfg.servers)) {
+      // Self-hosted TURN (coturn, etc.) — credentials stored directly in Firestore.
+      // Static credentials don't expire, so cache indefinitely within the instance.
+      cachedTurnServers = cfg.servers as unknown[];
+      turnCacheTimestamp = Date.now();
+      console.log('[getTurnCredentials] Returning static TURN credentials');
+      return cachedTurnServers;
+    }
+  } catch (e) {
+    console.warn('[getTurnCredentials] Failed to fetch TURN credentials:', e);
+  }
+
+  // Fallback — STUN only
+  return [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+});
 
 // ─── Clean up stale voice signaling rooms (older than 1 hour) ─────────────────
 

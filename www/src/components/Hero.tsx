@@ -1,4 +1,32 @@
+const RELEASES_BASE = 'https://www.maskord.com/releases';
+
+function getDesktopDownload(): { url: string; label: string } {
+  const ua  = navigator.userAgent;
+  const p   = navigator.platform ?? '';
+  if (/Mac/.test(p) || /Macintosh/i.test(ua)) {
+    // Detect Apple Silicon via WebGL renderer string (best client-side signal)
+    const gl  = document.createElement('canvas').getContext('webgl');
+    const ext = gl?.getExtension('WEBGL_debug_renderer_info');
+    const gpu = ext ? (gl?.getParameter(ext.UNMASKED_RENDERER_WEBGL) as string ?? '') : '';
+    const isM = /Apple M/i.test(gpu) || /arm/i.test(p);
+    return {
+      url:   `${RELEASES_BASE}/${isM ? 'Maskord-mac-arm64.dmg' : 'Maskord-mac-x64.dmg'}`,
+      label: 'Download for macOS',
+    };
+  }
+  if (/Win/i.test(p) || /Windows/i.test(ua)) {
+    return { url: `${RELEASES_BASE}/Maskord-win-setup.exe`, label: 'Download for Windows' };
+  }
+  if (/Linux/i.test(p) || /Linux/i.test(ua)) {
+    return { url: `${RELEASES_BASE}/Maskord-linux.AppImage`, label: 'Download for Linux' };
+  }
+  // Unknown / mobile — show all options
+  return { url: `${RELEASES_BASE}/`, label: 'Download for Desktop' };
+}
+
 export default function Hero() {
+  const download = getDesktopDownload();
+
   return (
     <section className="relative min-h-screen flex items-center justify-center px-6 pt-16 overflow-hidden">
       {/* Background glow orbs */}
@@ -43,10 +71,11 @@ export default function Hero() {
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <a
-              href="https://maskord.com/download"
+              href={download.url}
+              download
               className="w-full sm:w-auto px-8 py-4 rounded-xl bg-maskord-accent hover:bg-violet-500 text-white font-semibold text-base transition-all hover:scale-105 animate-glow-pulse shadow-lg shadow-violet-900/30"
             >
-              Download for Desktop
+              {download.label}
             </a>
             <a
               href="https://maskord.com/app"

@@ -1,0 +1,133 @@
+name: Build & Release Desktop App
+
+on:
+  push:
+    branches:
+      - production
+    paths:
+      - 'app/desktop/**'
+      - 'app/shared/src/**'
+      - '.github/workflows/electron-release.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build — ${{ matrix.os }}
+    runs-on: ${{ matrix.runner }}
+    environment: production
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: mac-arm64
+            runner: macos-latest
+            eb_args: --mac --arm64
+            artifact: Maskord-mac-arm64.dmg
+          - os: mac-x64
+            runner: macos-13        # last Intel macOS runner
+            eb_args: --mac --x64
+            artifact: Maskord-mac-x64.dmg
+          - os: windows
+            runner: windows-latest
+            eb_args: --win --x64
+            artifact: Maskord-win-setup.exe
+          - os: linux
+            runner: ubuntu-latest
+            eb_args: --linux --x64
+            artifact: Maskord-linux.AppImage
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      # Linux only: install electron build dependencies
+      - name: Install Linux deps
+        if: matrix.os == 'linux'
+        run: sudo apt-get install -y rpm fakeroot
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      - name: Build renderer + electron main
+        env:
+          VITE_FIREBASE_API_KEY:             ${{ secrets.FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN:         ${{ vars.FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_DATABASE_URL:        ${{ vars.FIREBASE_DATABASE_URL }}
+          VITE_FIREBASE_PROJECT_ID:          ${{ vars.FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_STORAGE_BUCKET:      ${{ vars.FIREBASE_STORAGE_BUCKET }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_FIREBASE_APP_ID:              ${{ secrets.FIREBASE_APP_ID }}
+        working-directory: app/desktop
+        run: npm run build:renderer
+
+      - name: Package with electron-builder
+        working-directory: app/desktop
+        run: npx electron-builder ${{ matrix.eb_args }} --publish never
+        env:
+          # Disable code signing — add CSC_LINK / WIN_CSC_LINK later for notarized builds
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Rename artifact to predictable name
+        shell: bash
+        working-directory: app/desktop/release
+        run: |
+          # Find whatever electron-builder produced and rename to our fixed name
+          if [[ "${{ matrix.os }}" == mac* ]]; then
+            src=$(find . -maxdepth 2 -name "*.dmg" | head -1)
+          elif [[ "${{ matrix.os }}" == windows ]]; then
+            src=$(find . -maxdepth 2 -name "*Setup*.exe" -o -name "*setup*.exe" | head -1)
+          else
+            src=$(find . -maxdepth 2 -name "*.AppImage" | head -1)
+          fi
+          echo "Renaming: $src → ${{ matrix.artifact }}"
+          mv "$src" "${{ matrix.artifact }}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Upload to S3
+        working-directory: app/desktop/release
+        run: |
+          aws s3 cp "${{ matrix.artifact }}" \
+            "s3://${{ vars.S3_BUCKET }}/releases/${{ matrix.artifact }}" \
+            --cache-control "no-cache,no-store,must-revalidate"
+          echo "✅ Uploaded: https://www.maskord.com/releases/${{ matrix.artifact }}"
+
+  invalidate:
+    name: Invalidate CloudFront /releases/*
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Invalidate /releases/*
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.CF_DISTRIBUTION_ID }}" \
+            --paths "/releases/*"
+
+      - name: Summary
+        run: |
+          echo "### ✅ Desktop Binaries Released" >> $GITHUB_STEP_SUMMARY
+          echo "- [Maskord-mac-arm64.dmg](https://www.maskord.com/releases/Maskord-mac-arm64.dmg)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Maskord-mac-x64.dmg](https://www.maskord.com/releases/Maskord-mac-x64.dmg)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Maskord-win-setup.exe](https://www.maskord.com/releases/Maskord-win-setup.exe)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Maskord-linux.AppImage](https://www.maskord.com/releases/Maskord-linux.AppImage)" >> $GITHUB_STEP_SUMMARY

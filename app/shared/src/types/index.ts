@@ -12,12 +12,17 @@ export interface MaskProfile {
 export interface User {
   id: string;
   displayName: string;
-  email: string;
+  email?: string;
   avatarUrl: string;
-  bio: string;
-  status: UserStatus;
-  createdAt: Timestamp;
-  masks: MaskProfile[];
+  bio?: string;
+  status?: UserStatus;
+  createdAt?: Timestamp;
+  masks?: MaskProfile[];
+  // Twitch-specific fields written by twitchOAuth Cloud Function
+  twitchId?: string;
+  twitchUsername?: string;
+  /** ID of the user's auto-created personal server, set when the guild is first created. */
+  personalGuildId?: string;
 }
 
 export type UserStatus = 'online' | 'idle' | 'dnd' | 'offline';
@@ -82,6 +87,10 @@ export interface Channel {
   nsfw: boolean;
   parentId: string | null; // category channel id
   permissionOverwrites: Record<string, PermissionOverwrite>; // keyed by roleId or userId
+  /** Total messages ever sent in this channel — incremented server-side on each send. */
+  messageCount?: number;
+  /** Timestamp of the most recent message — set server-side on each send. */
+  lastMessageAt?: Timestamp;
 }
 
 // ─── Message ─────────────────────────────────────────────────────────────────
@@ -139,9 +148,21 @@ export interface DirectMessage {
   id: string;
   content: string;
   senderId: string;
+  /** @deprecated stored as authorId in messages created before the senderId migration */
+  authorId?: string;
   createdAt: Timestamp;
   readBy: string[];
   attachments: Attachment[];
+}
+
+// ─── Friendship ──────────────────────────────────────────────────────────────
+
+export interface Friendship {
+  id: string;
+  uids: string[];
+  status: 'pending' | 'accepted';
+  requesterId: string;
+  createdAt: Timestamp;
 }
 
 // ─── Presence (Realtime DB) ───────────────────────────────────────────────────
@@ -159,12 +180,13 @@ export interface VoiceState {
   joinedAt: number; // unix ms
   muted: boolean;
   deafened: boolean;
+  speaking?: boolean; // updated by VAD/PTT client, read by sidebar for speaking indicators
 }
 
 // ─── Voice Signaling (Realtime DB) ───────────────────────────────────────────
 
 export interface RTCSignalDescription {
-  type: string;
+  type: RTCSdpType;
   sdp: string;
 }
 

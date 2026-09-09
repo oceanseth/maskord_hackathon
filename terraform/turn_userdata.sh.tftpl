@@ -1,0 +1,98 @@
+#!/bin/bash
+# ── coturn setup script for Ubuntu 22.04 LTS ──────────────────────────────────
+# Runs once on first boot via EC2 user_data.
+# Detects the Elastic IP via EC2 metadata on every coturn start (ExecStartPre).
+#
+# Variables interpolated by Terraform (tftpl syntax):
+#   ${turn_password}  — TURN credential for the "maskord" user
+
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+# ── Install coturn + iptables-persistent ──────────────────────────────────────
+apt-get update -qq
+# Pre-answer iptables-persistent prompts so it doesn't block the script
+echo iptables-persistent iptables-persistent/autosave_v4 boolean true | debconf-set-selections
+echo iptables-persistent iptables-persistent/autosave_v6 boolean true | debconf-set-selections
+apt-get install -y coturn iptables-persistent
+
+# ── Enable the service (disabled by default in the Ubuntu package) ─────────────
+sed -i 's/^#\?TURNSERVER_ENABLED=.*/TURNSERVER_ENABLED=1/' /etc/default/coturn
+
+# ── Write the EIP-detect helper ───────────────────────────────────────────────
+# Called by systemd ExecStartPre on every start so the config always reflects
+# the current Elastic IP (survives instance stop/start or EIP reassignment).
+cat > /usr/local/bin/coturn-set-eip.sh << 'EOFSCRIPT'
+#!/bin/bash
+set -euo pipefail
+
+# IMDSv2: get a short-lived token, then query the public IPv4
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" \
+  -H "X-aws-ec2-metadata-token-ttl-seconds: 60")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/public-ipv4)
+
+if [[ -z "$PUBLIC_IP" ]]; then
+  echo "coturn-set-eip: could not detect public IP — aborting" >&2
+  exit 1
+fi
+
+echo "coturn-set-eip: setting external-ip to $PUBLIC_IP"
+sed -i "s/^external-ip=.*/external-ip=$PUBLIC_IP/" /etc/turnserver.conf
+EOFSCRIPT
+chmod +x /usr/local/bin/coturn-set-eip.sh
+
+# ── Write coturn config ────────────────────────────────────────────────────────
+# external-ip is a placeholder; coturn-set-eip.sh updates it before each start.
+cat > /etc/turnserver.conf << EOFCONF
+# Listening interfaces / ports
+listening-port=3478
+
+# Relay range
+min-port=49152
+max-port=65535
+
+# Public IP — updated by coturn-set-eip.sh on every start
+external-ip=0.0.0.0
+
+# Realm and single long-term credential
+realm=maskord.com
+user=maskord:${turn_password}
+
+# Logging
+log-file=/var/log/turnserver/turnserver.log
+simple-log
+
+# Security — no unauthenticated access, no CLI
+no-cli
+no-loopback-peers
+no-multicast-peers
+fingerprint
+lt-cred-mech
+EOFCONF
+
+# ── Create log directory ───────────────────────────────────────────────────────
+mkdir -p /var/log/turnserver
+chown turnserver:turnserver /var/log/turnserver 2>/dev/null || true
+
+# ── Patch systemd unit to run EIP helper before starting ──────────────────────
+mkdir -p /etc/systemd/system/coturn.service.d
+cat > /etc/systemd/system/coturn.service.d/eip.conf << 'EOFDROP'
+[Service]
+ExecStartPre=+/usr/local/bin/coturn-set-eip.sh
+EOFDROP
+
+# ── Redirect port 443 → 3478 via iptables ────────────────────────────────────
+# coturn can't bind privileged ports as a non-root service.
+# Port 443/tcp looks like HTTPS to strict firewalls — essential for traversal.
+iptables  -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 3478
+iptables  -t nat -A PREROUTING -p udp --dport 443 -j REDIRECT --to-port 3478
+ip6tables -t nat -A PREROUTING -p tcp --dport 443 -j REDIRECT --to-port 3478
+ip6tables -t nat -A PREROUTING -p udp --dport 443 -j REDIRECT --to-port 3478
+# Persist so rules survive reboot
+netfilter-persistent save
+
+# ── Enable and start ───────────────────────────────────────────────────────────
+systemctl daemon-reload
+systemctl enable coturn
+systemctl start coturn

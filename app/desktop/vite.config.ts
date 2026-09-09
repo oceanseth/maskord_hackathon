@@ -1,16 +1,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-import electron from 'vite-plugin-electron';
+import electron from 'vite-plugin-electron/simple';
+import path from 'path';
 
 export default defineConfig({
   plugins: [
     react(),
-    electron([
-      {
+    electron({
+      main: {
         entry: 'electron/main.ts',
-        onstart(args) {
-          args.startup();
-        },
         vite: {
           build: {
             outDir: 'dist-electron',
@@ -18,8 +16,22 @@ export default defineConfig({
           },
         },
       },
-    ]),
+      preload: {
+        input: 'electron/preload.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            sourcemap: true,
+          },
+        },
+      },
+    }),
   ],
+  resolve: {
+    alias: {
+      '@maskord/shared': path.resolve(__dirname, '../shared/src/index.ts'),
+    },
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

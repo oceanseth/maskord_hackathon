@@ -27,23 +27,66 @@
 
     "voiceState": {
       "$guildId": {
+        // Any authenticated user can read voice channel state (to show who's in the channel)
+        ".read": "auth != null",
         "$channelId": {
-          // Any authenticated user can read voice channel state (to show who's in the channel)
-          ".read": "auth != null",
           "$userId": {
             // Users can only write their own voice state
             ".write": "auth != null && auth.uid == $userId",
             ".validate": "newData.hasChildren(['joinedAt', 'muted', 'deafened'])",
-            "joinedAt": {
-              ".validate": "newData.isNumber()"
-            },
-            "muted": {
-              ".validate": "newData.isBoolean()"
-            },
-            "deafened": {
-              ".validate": "newData.isBoolean()"
-            }
+            "joinedAt":  { ".validate": "newData.isNumber()" },
+            "muted":     { ".validate": "newData.isBoolean()" },
+            "deafened":  { ".validate": "newData.isBoolean()" },
+            "speaking":  { ".validate": "newData.isBoolean()" }
           }
+        }
+      }
+    },
+
+    "voiceInbox": {
+      "$userId": {
+        // Only the recipient reads their own inbox
+        ".read": "auth != null && auth.uid == $userId",
+        "$roomId": {
+          // Any authenticated user can write a notification to someone's inbox
+          ".write": "auth != null",
+          ".validate": "newData.isString()"
+        }
+      }
+    },
+
+    "voiceReconnectRequest": {
+      "$targetUserId": {
+        // Only the target reads their own reconnect requests
+        ".read": "auth != null && auth.uid == $targetUserId",
+        // Target can delete their entire slot on leave (newData must not exist = delete only)
+        ".write": "auth != null && auth.uid == $targetUserId && !newData.exists()",
+        "$requesterId": {
+          // Requester writes their entry; target can delete it after processing
+          ".write": "auth != null && (auth.uid == $requesterId || auth.uid == $targetUserId)",
+          ".validate": "newData.isNumber()"
+        }
+      }
+    },
+
+    "dmRing": {
+      "$calleeId": {
+        ".read": "auth != null && auth.uid == $calleeId",
+        "$callId": {
+          ".write": "auth != null",
+          ".validate": "!newData.exists() || newData.hasChildren(['callerId', 'ts'])",
+          "callerId": { ".validate": "newData.isString()" },
+          "ts":       { ".validate": "newData.isNumber()" }
+        }
+      }
+    },
+
+    "dmRingResponse": {
+      "$callerId": {
+        ".read": "auth != null && auth.uid == $callerId",
+        "$callId": {
+          ".write": "auth != null",
+          ".validate": "!newData.exists() || newData.isString()"
         }
       }
     },

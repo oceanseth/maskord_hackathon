@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   collection,
   doc,
+  getDoc,
   onSnapshot,
   query,
   where,
@@ -12,10 +13,12 @@ import {
   deleteDoc,
   serverTimestamp,
   getDocs,
+  Timestamp,
 } from 'firebase/firestore';
-import { getFirebaseDb } from '../firebase/init';
-import type { Guild, GuildMember, Role, Channel } from '../types';
-import { DEFAULT_PERMISSIONS } from '../utils/permissions';
+import { httpsCallable } from 'firebase/functions';
+import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { getFirebaseDb, getFirebaseFunctions, getFirebaseStorage } from '../firebase/init';
+import type { Guild, GuildMember, Role, Channel, ChannelType } from '../types';
 
 // ─── User's guild list ────────────────────────────────────────────────────────
 
@@ -44,11 +47,16 @@ export function useUserGuilds(userId: string | null) {
         setLoading(false);
         return;
       }
-      // Fetch each guild doc
+      // Fetch each guild individually so a permission error on one (e.g. a brief
+      // consistency window after invite join) doesn't kill the whole batch.
       const results = await Promise.all(
         guildIds.map(async (gid) => {
-          const gSnap = await getDocs(query(collection(db, 'guilds'), where('__name__', '==', gid)));
-          return gSnap.docs[0] ? ({ id: gSnap.docs[0].id, ...gSnap.docs[0].data() } as Guild) : null;
+          try {
+            const snap = await getDoc(doc(db, 'guilds', gid));
+            return snap.exists() ? ({ id: snap.id, ...snap.data() } as Guild) : null;
+          } catch {
+            return null; // permission not yet propagated — next snapshot will retry
+          }
         }),
       );
       setGuilds(results.filter(Boolean) as Guild[]);
@@ -134,79 +142,87 @@ export function useGuildChannels(guildId: string | null) {
   return channels;
 }
 
-// ─── Create guild ─────────────────────────────────────────────────────────────
+// ─── Create guild (via Cloud Function — bypasses member write rules) ──────────
 
-export async function createGuild(ownerId: string, name: string): Promise<string> {
+export async function createGuild(_ownerId: string, name: string): Promise<string> {
+  const fn = httpsCallable<{ name: string }, { guildId: string }>(
+    getFirebaseFunctions(), 'createGuildFn',
+  );
+  const result = await fn({ name });
+  return result.data.guildId;
+}
+
+// ─── Channel CRUD ─────────────────────────────────────────────────────────────
+
+export async function createChannel(
+  guildId: string,
+  data: { name: string; type: ChannelType; parentId?: string | null; position?: number },
+): Promise<string> {
   const db = getFirebaseDb();
-
-  const guildRef = await addDoc(collection(db, 'guilds'), {
-    name,
-    description: '',
-    iconUrl: '',
-    ownerId,
-    createdAt: serverTimestamp(),
-    vanityCode: null,
-    settings: {
-      defaultNotifications: 'all',
-      explicitContentFilter: 'disabled',
-      verificationLevel: 'none',
-    },
-  });
-
-  const guildId = guildRef.id;
-
-  // Create @everyone role
-  const everyoneRoleRef = doc(collection(db, 'guilds', guildId, 'roles'));
-  await setDoc(everyoneRoleRef, {
-    name: '@everyone',
-    color: '#99AAB5',
-    permissions: DEFAULT_PERMISSIONS,
-    position: 0,
-    hoist: false,
-    mentionable: false,
-  });
-
-  // Add owner as member
-  await setDoc(doc(db, 'guilds', guildId, 'members', ownerId), {
-    nickname: null,
-    roles: [everyoneRoleRef.id],
-    joinedAt: serverTimestamp(),
-    muted: false,
-    deafened: false,
-    pending: false,
-  });
-
-  // Mirror membership for fast querying
-  await setDoc(doc(db, 'members_index', `${guildId}_${ownerId}`), {
-    guildId,
-    userId: ownerId,
-    joinedAt: serverTimestamp(),
-  });
-
-  // Create default channels
-  await addDoc(collection(db, 'guilds', guildId, 'channels'), {
-    name: 'general',
-    type: 'text',
-    position: 0,
-    topic: 'General discussion',
-    slowmode: 0,
-    nsfw: false,
-    parentId: null,
-    permissionOverwrites: {},
-  });
-
-  await addDoc(collection(db, 'guilds', guildId, 'channels'), {
-    name: 'General',
-    type: 'voice',
-    position: 1,
+  const ref = await addDoc(collection(db, 'guilds', guildId, 'channels'), {
+    name: data.name,
+    type: data.type,
+    position: data.position ?? 999,
     topic: null,
     slowmode: 0,
     nsfw: false,
-    parentId: null,
+    parentId: data.parentId ?? null,
     permissionOverwrites: {},
   });
+  return ref.id;
+}
 
-  return guildId;
+export async function updateChannel(
+  guildId: string,
+  channelId: string,
+  updates: Partial<Pick<Channel, 'name' | 'topic' | 'position' | 'parentId'>>,
+): Promise<void> {
+  const db = getFirebaseDb();
+  await updateDoc(doc(db, 'guilds', guildId, 'channels', channelId), updates as Record<string, unknown>);
+}
+
+export async function deleteChannel(guildId: string, channelId: string): Promise<void> {
+  const db = getFirebaseDb();
+  await deleteDoc(doc(db, 'guilds', guildId, 'channels', channelId));
+}
+
+// ─── Create invite ────────────────────────────────────────────────────────────
+
+export async function createInvite(
+  guildId: string,
+  channelId: string,
+  inviterId: string,
+  options: { maxUses?: number | null; expiresInHours?: number | null } = {},
+): Promise<string> {
+  const db = getFirebaseDb();
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  let code = '';
+  for (let i = 0; i < 8; i++) code += chars[Math.floor(Math.random() * chars.length)];
+
+  const expiresAt = options.expiresInHours
+    ? Timestamp.fromDate(new Date(Date.now() + options.expiresInHours * 3600_000))
+    : null;
+
+  await setDoc(doc(db, 'invites', code), {
+    code,
+    guildId,
+    channelId,
+    inviterId,
+    uses: 0,
+    maxUses: options.maxUses ?? null,
+    expiresAt,
+    createdAt: serverTimestamp(),
+  });
+  return code;
+}
+
+// ─── Leave guild (via Cloud Function) ────────────────────────────────────────
+
+export async function leaveGuild(guildId: string): Promise<void> {
+  const fn = httpsCallable<{ guildId: string }, { success: boolean }>(
+    getFirebaseFunctions(), 'leaveGuild',
+  );
+  await fn({ guildId });
 }
 
 // ─── Update guild settings ────────────────────────────────────────────────────
@@ -219,9 +235,41 @@ export async function updateGuildSettings(
   await updateDoc(doc(db, 'guilds', guildId), updates as Record<string, unknown>);
 }
 
+// ─── Upload guild icon ────────────────────────────────────────────────────────
+
+export async function uploadGuildIcon(guildId: string, file: File): Promise<string> {
+  const storage = getFirebaseStorage();
+  // Fixed filename per guild — overwriting updates the token/URL automatically
+  const iconRef = storageRef(storage, `maskord/guilds/${guildId}/icon/icon`);
+  await uploadBytes(iconRef, file, { contentType: file.type });
+  const url = await getDownloadURL(iconRef);
+  await updateGuildSettings(guildId, { iconUrl: url });
+  return url;
+}
+
 // ─── Delete guild ─────────────────────────────────────────────────────────────
 
 export async function deleteGuild(guildId: string) {
   const db = getFirebaseDb();
   await deleteDoc(doc(db, 'guilds', guildId));
+}
+
+// ─── Join via invite link (Cloud Function) ────────────────────────────────────
+
+export async function joinViaInvite(code: string): Promise<{ guildId: string; alreadyMember: boolean }> {
+  const fn = httpsCallable<{ code: string }, { guildId: string; alreadyMember: boolean }>(
+    getFirebaseFunctions(), 'joinGuildWithInvite',
+  );
+  const result = await fn({ code });
+  return result.data;
+}
+
+// ─── Join a mutual friend's guild (Cloud Function) ───────────────────────────
+
+export async function joinGuildAsMutualFriend(guildId: string): Promise<{ guildId: string; alreadyMember: boolean }> {
+  const fn = httpsCallable<{ guildId: string }, { guildId: string; alreadyMember: boolean }>(
+    getFirebaseFunctions(), 'joinGuildAsMutualFriend',
+  );
+  const result = await fn({ guildId });
+  return result.data;
 }

@@ -1,3 +1,58 @@
+# ─── CloudFront Function: Redirect apex → www ────────────────────────────────
+
+resource "aws_cloudfront_function" "apex_redirect" {
+  name    = "maskord-apex-to-www"
+  runtime = "cloudfront-js-2.0"
+  comment = "Apex redirect + /app SPA routing"
+  publish = true
+  code    = <<-EOF
+    function handler(event) {
+      var request = event.request;
+      var host    = request.headers.host.value;
+      var uri     = request.uri;
+
+      // ── 1. Apex → www redirect (preserve query string for OAuth callbacks) ──
+      if (host === "maskord.com") {
+        var qs = "";
+        var q  = request.querystring;
+        if (q) {
+          var parts = [];
+          for (var k in q) {
+            var v = q[k];
+            var vals = v.multiValue || [v];
+            for (var i = 0; i < vals.length; i++) {
+              parts.push(k + "=" + vals[i].value);
+            }
+          }
+          if (parts.length) qs = "?" + parts.join("&");
+        }
+        return {
+          statusCode: 301,
+          statusDescription: "Moved Permanently",
+          headers: { location: { value: "https://www.maskord.com" + uri + qs } }
+        };
+      }
+
+      // ── 2. /app SPA routing — serve /app/index.html for any path that
+      //       doesn't look like a direct file (no extension after last slash) ──
+      if (uri === "/app" || uri === "/app/") {
+        request.uri = "/app/index.html";
+        return request;
+      }
+      if (uri.startsWith("/app/")) {
+        var lastSlash = uri.lastIndexOf("/");
+        var basename  = uri.substring(lastSlash + 1);
+        if (basename.indexOf(".") === -1) {
+          request.uri = "/app/index.html";
+          return request;
+        }
+      }
+
+      return request;
+    }
+  EOF
+}
+
 resource "aws_cloudfront_distribution" "website" {
   enabled             = true
   is_ipv6_enabled     = true
@@ -26,6 +81,11 @@ resource "aws_cloudfront_distribution" "website" {
     cache_policy_id            = "658327ea-f89d-4fab-a63d-7e88639e58f6" # CachingOptimized (AWS managed)
     origin_request_policy_id   = "88a5eaf4-2fd4-4709-b370-b4c650ea3fcf" # CORS-S3Origin (AWS managed)
     response_headers_policy_id = aws_cloudfront_response_headers_policy.website.id
+
+    function_association {
+      event_type   = "viewer-request"
+      function_arn = aws_cloudfront_function.apex_redirect.arn
+    }
   }
 
   # ─── Custom Error Pages (SPA routing — return index.html for 404/403) ───

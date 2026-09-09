@@ -54,6 +54,32 @@ service cloud.firestore {
          getRole(guildId, getMember(guildId).roles[0]).permissions & permBit != 0);
     }
 
+    // Check if two users are mutual friends (accepted friendship exists).
+    // Friendship IDs are sorted lexicographically: [uid1, uid2].sort().join('__')
+    function areMutualFriends(uid1, uid2) {
+      let fId = uid1 < uid2 ? uid1 + '__' + uid2 : uid2 + '__' + uid1;
+      return exists(/databases/$(database)/documents/friendships/$(fId)) &&
+        get(/databases/$(database)/documents/friendships/$(fId)).data.status == 'accepted';
+    }
+
+    // Check if the requesting user is a mutual friend of a guild's owner.
+    // Used to grant preview-level access (guild, channels, members, roles — but NOT messages).
+    function isMutualFriendOfOwner(guildId) {
+      return isAuthed() &&
+        areMutualFriends(
+          request.auth.uid,
+          get(/databases/$(database)/documents/guilds/$(guildId)).data.ownerId
+        );
+    }
+
+    // ─── Internal config (admin SDK only) ─────────────────────────────────────
+    // _config/* is read/written only by Cloud Functions via the admin SDK.
+    // Clients have no access regardless of auth state.
+
+    match /_config/{document=**} {
+      allow read, write: if false;
+    }
+
     // ─── Users ─────────────────────────────────────────────────────────────────
 
     match /users/{userId} {
@@ -79,8 +105,10 @@ service cloud.firestore {
     // ─── Guilds ────────────────────────────────────────────────────────────────
 
     match /guilds/{guildId} {
-      // Members can read guild data
-      allow read: if isMember(guildId);
+      // Members can always read. Mutual friends of the owner get preview access.
+      // resource.data.ownerId is the guild doc being read — no extra get() needed here.
+      allow read: if isMember(guildId) ||
+        (isAuthed() && areMutualFriends(request.auth.uid, resource.data.ownerId));
 
       // Any authenticated user can create a guild
       allow create: if isAuthed() &&
@@ -98,8 +126,8 @@ service cloud.firestore {
       // ─── Guild Members ────────────────────────────────────────────────────
 
       match /members/{memberId} {
-        // All guild members can see each other
-        allow read: if isMember(guildId);
+        // Members and mutual friends of owner can see the member list
+        allow read: if isMember(guildId) || isMutualFriendOfOwner(guildId);
 
         // Only Cloud Functions write member documents (join/invite/kick flow)
         // Direct writes disallowed to prevent permission escalation
@@ -113,7 +141,7 @@ service cloud.firestore {
       // ─── Guild Roles ──────────────────────────────────────────────────────
 
       match /roles/{roleId} {
-        allow read: if isMember(guildId);
+        allow read: if isMember(guildId) || isMutualFriendOfOwner(guildId);
         allow write: if isMember(guildId) &&
           (isGuildOwner(guildId) || memberHasPermission(guildId, 65536)); // MANAGE_ROLES
       }
@@ -121,9 +149,14 @@ service cloud.firestore {
       // ─── Guild Channels ───────────────────────────────────────────────────
 
       match /channels/{channelId} {
-        allow read: if isMember(guildId);
+        // Mutual friends of the owner can preview channels (but not messages)
+        allow read: if isMember(guildId) || isMutualFriendOfOwner(guildId);
         allow create, update, delete: if isMember(guildId) &&
           (isGuildOwner(guildId) || memberHasPermission(guildId, 4096)); // MANAGE_CHANNELS
+
+        // Any member can increment the message counter + lastMessageAt when sending
+        allow update: if isMember(guildId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['messageCount', 'lastMessageAt']);
 
         // ─── Messages ───────────────────────────────────────────────────────
 
@@ -175,6 +208,26 @@ service cloud.firestore {
          memberIsAdmin(resource.data.guildId));
 
       allow update: if false; // use counter incremented by Cloud Function
+    }
+
+    // ─── Friendships ───────────────────────────────────────────────────────────
+
+    match /friendships/{friendshipId} {
+      allow read: if isAuthed() && request.auth.uid in resource.data.uids;
+
+      allow create: if isAuthed() &&
+        request.auth.uid in request.resource.data.uids &&
+        request.resource.data.uids.size() == 2 &&
+        request.resource.data.requesterId == request.auth.uid &&
+        request.resource.data.status == 'pending' &&
+        request.resource.data.keys().hasAll(['uids', 'status', 'requesterId', 'createdAt']);
+
+      allow update: if isAuthed() &&
+        request.auth.uid in resource.data.uids &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']) &&
+        request.resource.data.status == 'accepted';
+
+      allow delete: if isAuthed() && request.auth.uid in resource.data.uids;
     }
 
     // ─── Direct Messages ───────────────────────────────────────────────────────

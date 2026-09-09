@@ -9,6 +9,7 @@ import {
   updateDoc,
   deleteDoc,
   doc,
+  increment,
   serverTimestamp,
   startAfter,
   getDocs,
@@ -100,6 +101,12 @@ export async function sendMessage(
     mentions,
     pinned: false,
     type: 'default',
+  });
+
+  // Increment the channel's total message counter (used for scalable unread tracking)
+  await updateDoc(doc(db, 'guilds', guildId, 'channels', channelId), {
+    messageCount: increment(1),
+    lastMessageAt: serverTimestamp(),
   });
 }
 

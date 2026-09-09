@@ -6,27 +6,35 @@ import Footer from './components/Footer';
 import Nav from './components/Nav';
 import HackathonPage from './hackathon/HackathonPage';
 import ChannelPage from './channel/ChannelPage';
-import ServerPage from './server/ServerPage';
 
 // The same bundle is served three ways: from S3 + CloudFront at
 // maskord.com/hackathon, and from Convex Static Hosting at
 // hackathon.maskord.com (and its <deployment>.convex.site origin), where the
 // hackathon page is the whole point of the host. Both fall back to index.html
 // for unknown paths, so routing is decided here.
+//
+// /app/ is not handled here at all: the Maskord client is a separate build
+// published under dist/app, so a request for it hits a real file. Only the
+// slashless /app and the older /server land here, and both redirect.
 function route(hostname: string, pathname: string) {
   const host = hostname.toLowerCase();
   const path = pathname.replace(/\/+$/, '').toLowerCase();
 
   if (path === '/channel') return 'channel';
-  if (path === '/server') return 'server';
+  if (path === '/server' || path === '/app') return 'app';
   if (host.split('.')[0] === 'hackathon' || host.endsWith('.convex.site')) return 'hackathon';
   return path === '/hackathon' ? 'hackathon' : 'home';
 }
 
 export default function App() {
   const page = route(window.location.hostname, window.location.pathname);
+
+  if (page === 'app') {
+    window.location.replace('/app/');
+    return null;
+  }
+
   if (page === 'channel') return <ChannelPage />;
-  if (page === 'server') return <ServerPage />;
   if (page === 'hackathon') return <HackathonPage />;
 
   return (
