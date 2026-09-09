@@ -31,7 +31,9 @@ export default function App() {
   const page = route(window.location.hostname, window.location.pathname);
 
   if (page === 'app') {
-    window.location.replace('/app/index.html');
+    // Query and hash are carried across: /app is the OAuth redirect target, and
+    // Twitch comes back with ?code=…&state=… that the client needs.
+    window.location.replace(`/app/index.html${window.location.search}${window.location.hash}`);
     return null;
   }
 

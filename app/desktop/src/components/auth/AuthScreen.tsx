@@ -4,11 +4,17 @@ import { useAuth, getFirebaseAuth } from '@maskord/shared';
 
 const TWITCH_CLIENT_ID  = 'sgb17aslo6gesnetuqfnf6qql6jrae';
 const TWITCH_OAUTH_URL  = 'https://us-central1-maskydotnet.cloudfunctions.net/twitchOAuth';
-// Web redirect URI — Twitch sends the user back here after authorising.
-// Must be registered in the Twitch developer console AND allowed by the Cloud Function.
-const WEB_REDIRECT_URI  = 'https://www.maskord.com/app';
-
 const isElectron = typeof window !== 'undefined' && 'electron' in window;
+
+// Web redirect URI — Twitch sends the user back here after authorising.
+// Must be registered in the Twitch developer console AND allowed by the Cloud
+// Function. Derived from the current origin rather than hardcoded, so a build
+// served from somewhere other than maskord.com returns to itself; on
+// www.maskord.com this resolves to the same value it always was.
+const WEB_REDIRECT_URI =
+  typeof window === 'undefined'
+    ? 'https://www.maskord.com/app'
+    : `${window.location.origin}/app`;
 
 type Mode = 'login' | 'register';
 
