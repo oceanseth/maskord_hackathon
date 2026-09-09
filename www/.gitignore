@@ -1,2 +1,9 @@
 
 .env.local
+
+# Convex AI tooling scaffolding, not part of the build
+.claude/
+.agents/
+skills-lock.json
+AGENTS.md
+CLAUDE.md
