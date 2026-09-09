@@ -5,6 +5,7 @@ import CTA from './components/CTA';
 import Footer from './components/Footer';
 import Nav from './components/Nav';
 import HackathonPage from './hackathon/HackathonPage';
+import ChannelPage from './channel/ChannelPage';
 
 // The same bundle is served three ways: from S3 + CloudFront at
 // maskord.com/hackathon, and from Convex Static Hosting at
@@ -13,14 +14,17 @@ import HackathonPage from './hackathon/HackathonPage';
 // for unknown paths, so routing is decided here.
 function route(hostname: string, pathname: string) {
   const host = hostname.toLowerCase();
+  const path = pathname.replace(/\/+$/, '').toLowerCase();
+
+  if (path === '/channel') return 'channel';
   if (host.split('.')[0] === 'hackathon' || host.endsWith('.convex.site')) return 'hackathon';
-  return pathname.replace(/\/+$/, '').toLowerCase() === '/hackathon' ? 'hackathon' : 'home';
+  return path === '/hackathon' ? 'hackathon' : 'home';
 }
 
 export default function App() {
-  if (route(window.location.hostname, window.location.pathname) === 'hackathon') {
-    return <HackathonPage />;
-  }
+  const page = route(window.location.hostname, window.location.pathname);
+  if (page === 'channel') return <ChannelPage />;
+  if (page === 'hackathon') return <HackathonPage />;
 
   return (
     <div className="min-h-screen bg-maskord-dark overflow-x-hidden">
