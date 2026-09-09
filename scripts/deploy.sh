@@ -70,11 +70,14 @@ aws s3 sync "${DIST_DIR}/assets" "s3://${S3_BUCKET}/assets" \
   --cache-control "public, max-age=31536000, immutable" \
   --quiet
 
-# Sync HTML and other files with short cache (5 minutes)
+# Sync HTML and other files with short cache (5 minutes).
+# app/* is the web client, deployed separately into the same bucket — excluding
+# it keeps --delete from wiping maskord.com/app on a website deploy.
 aws s3 sync "${DIST_DIR}" "s3://${S3_BUCKET}" \
   --delete \
   --region "${AWS_REGION}" \
   --exclude "assets/*" \
+  --exclude "app/*" \
   --cache-control "public, max-age=300, must-revalidate" \
   --quiet
 
