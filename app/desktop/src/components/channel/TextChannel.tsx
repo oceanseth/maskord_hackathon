@@ -4,6 +4,8 @@ import type { Message } from '@maskord/shared';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { formatDistanceToNow } from 'date-fns';
 import UserProfilePopover from '../ui/UserProfilePopover';
+import MessageAttachments from './MessageAttachments';
+import { uploadAttachment } from '../../lib/convexUploads';
 
 interface Props {
   guildId: string;
@@ -17,6 +19,10 @@ export default function TextChannel({ guildId, channelId }: Props) {
   const { messages, loading, hasMore, loadMore } = useMessages(guildId, channelId);
   const members = useGuildMembers(guildId);
   const [input, setInput] = useState('');
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const virtuosoRef = useRef<VirtuosoHandle>(null);
@@ -66,6 +72,39 @@ export default function TextChannel({ guildId, channelId }: Props) {
     await sendMessage(guildId, channelId, firebaseUser.uid, content);
   }
 
+  /**
+   * Files go straight to Convex storage; the message that carries them stays in
+   * Firestore. Firestore rules reject an empty message body, so an attachment
+   * sent on its own is captioned with its filename.
+   */
+  const sendFiles = useCallback(
+    async (files: FileList | File[]) => {
+      if (!firebaseUser) return;
+      setUploadError(null);
+
+      for (const file of Array.from(files)) {
+        setUploading(file.name);
+        try {
+          const attachment = await uploadAttachment(file);
+          const caption = input.trim();
+          if (caption) setInput('');
+          await sendMessage(
+            guildId,
+            channelId,
+            firebaseUser.uid,
+            caption || file.name,
+            [attachment],
+          );
+        } catch (err) {
+          setUploadError(err instanceof Error ? err.message : 'Upload failed');
+        } finally {
+          setUploading(null);
+        }
+      }
+    },
+    [firebaseUser, guildId, channelId, input],
+  );
+
   function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -79,8 +118,44 @@ export default function TextChannel({ guildId, channelId }: Props) {
     setEditingId(null);
   }
 
+  const dragDepth = useRef(0);
+  const hasFiles = (e: React.DragEvent) => e.dataTransfer?.types.includes('Files');
+
   return (
-    <div className="flex-1 flex min-h-0 bg-[#0e0e16]">
+    <div
+      className="relative flex-1 flex min-h-0 bg-[#0e0e16]"
+      onDragEnter={(e) => {
+        if (!hasFiles(e)) return;
+        dragDepth.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        if (hasFiles(e)) e.preventDefault();
+      }}
+      onDragLeave={(e) => {
+        if (!hasFiles(e)) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        dragDepth.current = 0;
+        setDragging(false);
+        if (e.dataTransfer.files.length) void sendFiles(e.dataTransfer.files);
+      }}
+    >
+      {dragging && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#0e0e16]/85 backdrop-blur-sm pointer-events-none">
+          <div className="px-10 py-8 rounded-2xl border-2 border-dashed border-violet-500 text-center">
+            <p className="text-white font-semibold text-xl">Drop to share in #{channelName}</p>
+            <p className="text-[#94a3b8] text-sm mt-2">
+              Images and video play inline. Anything else becomes a download.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Message area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Channel header */}
@@ -130,8 +205,34 @@ export default function TextChannel({ guildId, channelId }: Props) {
 
         {/* Message input */}
         <div className="px-4 pb-4 flex-shrink-0">
+          {uploadError && (
+            <p className="mb-2 text-xs text-red-400">{uploadError}</p>
+          )}
+          {uploading && (
+            <p className="mb-2 text-xs text-[#6b7280]">Uploading {uploading}…</p>
+          )}
           <form onSubmit={handleSend}>
             <div className="flex items-end gap-3 bg-[#1a1a28] rounded-xl px-4 py-3 border border-[#2a2a40]">
+              <button
+                type="button"
+                title="Attach a file"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-8 h-8 rounded-lg hover:bg-[#2a2a40] text-[#6b7280] hover:text-white flex items-center justify-center transition-colors flex-shrink-0"
+              >
+                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+                </svg>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  if (e.target.files?.length) void sendFiles(e.target.files);
+                  e.target.value = '';
+                }}
+              />
               <textarea
                 ref={inputRef}
                 value={input}
@@ -266,9 +367,12 @@ function MessageRow({
             </div>
           </div>
         ) : (
-          <p className="text-sm text-[#d4d8e0] whitespace-pre-wrap break-words selectable leading-relaxed">
-            {message.content}
-          </p>
+          <>
+            <p className="text-sm text-[#d4d8e0] whitespace-pre-wrap break-words selectable leading-relaxed">
+              {message.content}
+            </p>
+            <MessageAttachments attachments={message.attachments} />
+          </>
         )}
 
         {/* Reactions */}

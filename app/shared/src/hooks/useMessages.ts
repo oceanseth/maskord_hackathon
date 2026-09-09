@@ -17,7 +17,7 @@ import {
   type DocumentData,
 } from 'firebase/firestore';
 import { getFirebaseDb } from '../firebase/init';
-import type { Message } from '../types';
+import type { Attachment, Message } from '../types';
 
 const PAGE_SIZE = 50;
 
@@ -85,6 +85,7 @@ export async function sendMessage(
   channelId: string,
   authorId: string,
   content: string,
+  attachments: Attachment[] = [],
 ) {
   const db = getFirebaseDb();
   const messagesRef = collection(db, 'guilds', guildId, 'channels', channelId, 'messages');
@@ -96,7 +97,7 @@ export async function sendMessage(
     authorId,
     createdAt: serverTimestamp(),
     editedAt: null,
-    attachments: [],
+    attachments,
     reactions: {},
     mentions,
     pinned: false,
