@@ -35,7 +35,7 @@ function HackNav() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass border-b border-maskord-border">
       <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between gap-4">
-        <a href="/" className="flex items-center gap-3 shrink-0">
+        <a href="https://maskord.com" className="flex items-center gap-3 shrink-0">
           <MaskIcon className="w-8 h-8 text-maskord-accent" />
           <span className="font-display font-bold text-xl text-maskord-text tracking-tight">
             Maskord

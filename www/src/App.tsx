@@ -6,16 +6,19 @@ import Footer from './components/Footer';
 import Nav from './components/Nav';
 import HackathonPage from './hackathon/HackathonPage';
 
-// CloudFront serves /index.html for any path the S3 origin does not hold, so
-// routing is decided here from the pathname. Keep this list in sync with any
-// new standalone page under src/.
-function route(pathname: string) {
-  const path = pathname.replace(/\/+$/, '').toLowerCase();
-  return path === '/hackathon' ? 'hackathon' : 'home';
+// The same bundle is served three ways: from S3 + CloudFront at
+// maskord.com/hackathon, and from Convex Static Hosting at
+// hackathon.maskord.com (and its <deployment>.convex.site origin), where the
+// hackathon page is the whole point of the host. Both fall back to index.html
+// for unknown paths, so routing is decided here.
+function route(hostname: string, pathname: string) {
+  const host = hostname.toLowerCase();
+  if (host.split('.')[0] === 'hackathon' || host.endsWith('.convex.site')) return 'hackathon';
+  return pathname.replace(/\/+$/, '').toLowerCase() === '/hackathon' ? 'hackathon' : 'home';
 }
 
 export default function App() {
-  if (route(window.location.pathname) === 'hackathon') {
+  if (route(window.location.hostname, window.location.pathname) === 'hackathon') {
     return <HackathonPage />;
   }
 

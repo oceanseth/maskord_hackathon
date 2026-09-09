@@ -1,5 +1,27 @@
 # Serving the site from Convex Static Hosting
 
+**Live.** Team `seth-ff468`, project `maskord-hackathon`, prod deployment
+`impressive-skunk-614`.
+
+- Convex origin (eligibility evidence): https://impressive-skunk-614.convex.site
+- Vanity domain: https://hackathon.maskord.com — CloudFront `E23OQTGY3MVJNY`
+  in front of the Convex origin (route B below).
+
+A second project, `maskord-hackathon-2131d`, was created by accident during
+setup and is unused. Delete it from the dashboard if it is in the way.
+
+## Redeploying
+
+```bash
+cd www
+npx convex deploy -y
+npx @convex-dev/static-hosting upload --build --prod -d ./dist
+aws cloudfront create-invalidation --distribution-id E23OQTGY3MVJNY --paths "/*"
+```
+
+`upload` without `--build` fails to resolve the component; keep the flag.
+
+
 The Convex "Multiplayer" challenge requires the frontend to be deployed on
 Convex Static Hosting (`convex.site`), so this workspace can be published to
 Convex as well as to S3 + CloudFront.
