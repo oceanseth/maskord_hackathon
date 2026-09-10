@@ -365,13 +365,18 @@ export function useVoiceChannel(
     shareTrackRef.current?.stop();
     shareTrackRef.current = null;
     await replaceVideoTrack(placeholderRef.current);
+    // Mutate the existing stream rather than swapping in a new one. Effects
+    // elsewhere key off the stream's identity — the VAD setup in particular
+    // re-enables the raw microphone when it re-runs, which would put the user's
+    // real voice back on the wire mid-call even while a mask is speaking for
+    // them.
     setLocalStream((prev) => {
       if (!prev) return prev;
       prev.getVideoTracks().forEach((t) => { if (t !== placeholderRef.current) prev.removeTrack(t); });
       if (placeholderRef.current && !prev.getVideoTracks().includes(placeholderRef.current)) {
         prev.addTrack(placeholderRef.current);
       }
-      return new MediaStream(prev.getTracks());
+      return prev;
     });
     setSharing(null);
     publishSharing(null);
@@ -399,10 +404,12 @@ export function useVoiceChannel(
     track.onended = () => { void stopSharing(); };
 
     await replaceVideoTrack(track);
+    // Same identity, mutated in place — see stopSharing.
     setLocalStream((prev) => {
-      const next = new MediaStream(prev ? prev.getAudioTracks() : []);
-      next.addTrack(track);
-      return next;
+      if (!prev) return new MediaStream([track]);
+      prev.getVideoTracks().forEach((t) => prev.removeTrack(t));
+      prev.addTrack(track);
+      return prev;
     });
     setSharing(kind);
     publishSharing(kind);
