@@ -4,6 +4,9 @@ import type { Message } from '@maskord/shared';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { formatDistanceToNow } from 'date-fns';
 import UserProfilePopover from '../ui/UserProfilePopover';
+import { useAppStore } from '../../store/app';
+import MobileBackButton from '../ui/MobileBackButton';
+import MessageInput from './MessageInput';
 
 interface Props {
   guildId: string;
@@ -16,11 +19,9 @@ export default function TextChannel({ guildId, channelId }: Props) {
   const channelName = channels.find((c) => c.id === channelId)?.name ?? '';
   const { messages, loading, hasMore, loadMore } = useMessages(guildId, channelId);
   const members = useGuildMembers(guildId);
-  const [input, setInput] = useState('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Profile popover state
   const [profilePopover, setProfilePopover] = useState<{
@@ -58,19 +59,9 @@ export default function TextChannel({ guildId, channelId }: Props) {
     setProfilePopover({ userId, anchorRect: rect });
   }
 
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    const content = input.trim();
-    if (!content || !firebaseUser) return;
-    setInput('');
+  async function handleSendText(content: string) {
+    if (!firebaseUser) return;
     await sendMessage(guildId, channelId, firebaseUser.uid, content);
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend(e as unknown as React.FormEvent);
-    }
   }
 
   async function handleEdit(msg: Message) {
@@ -85,6 +76,7 @@ export default function TextChannel({ guildId, channelId }: Props) {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Channel header */}
         <div className="h-12 flex items-center gap-2 px-4 border-b border-[#1e1e2e] flex-shrink-0">
+          <MobileBackButton onClick={() => useAppStore.getState().setActiveChannel(null, 'text')} />
           <span className="text-[#6b7280] text-lg">#</span>
           <span className="font-semibold text-white text-sm">{channelName}</span>
         </div>
@@ -128,32 +120,10 @@ export default function TextChannel({ guildId, channelId }: Props) {
           )}
         </div>
 
-        {/* Message input */}
-        <div className="px-4 pb-4 flex-shrink-0">
-          <form onSubmit={handleSend}>
-            <div className="flex items-end gap-3 bg-[#1a1a28] rounded-xl px-4 py-3 border border-[#2a2a40]">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Send a message..."
-                rows={1}
-                className="flex-1 bg-transparent text-white text-sm outline-none resize-none placeholder:text-[#6b7280] selectable"
-                style={{ maxHeight: '200px' }}
-              />
-              <button
-                type="submit"
-                disabled={!input.trim()}
-                className="w-8 h-8 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-30 flex items-center justify-center transition-colors flex-shrink-0"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                </svg>
-              </button>
-            </div>
-          </form>
-        </div>
+        <MessageInput
+          placeholder={`Message #${channelName}`}
+          onSend={handleSendText}
+        />
       </div>
 
       {/* User profile popover */}

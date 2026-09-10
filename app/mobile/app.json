@@ -2,6 +2,7 @@
   "expo": {
     "name": "Maskord",
     "slug": "maskord",
+    "scheme": "maskord",
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,6 +15,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.maskord.app",
+      "developmentTeam": "MXZZQH555K",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "Maskord needs microphone access to participate in voice channels.",
         "NSCameraUsageDescription": "Maskord needs camera access for video calls."
@@ -35,13 +37,12 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      [
-        "expo-av",
-        { "microphonePermission": "Allow Maskord to access your microphone for voice channels." }
-      ]
+      "expo-web-browser"
     ],
     "extra": {
-      "eas": { "projectId": "maskord-mobile" }
+      "eas": {
+        "projectId": "maskord-mobile"
+      }
     }
   }
 }

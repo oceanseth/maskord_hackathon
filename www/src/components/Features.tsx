@@ -24,10 +24,10 @@ const features = [
       'Your real identity is never exposed. Servers see only your mask. Admins cannot trace masks back to real users without your explicit permission.',
   },
   {
-    icon: '🤖',
-    title: 'AI as a Lens',
+    icon: '💸',
+    title: 'Monetize your Mask',
     description:
-      'Powered by masky.ai — let AI shape how you appear, speak, and interact. Give your mask a personality, a voice, and a story.',
+      'Build a mask on masky.ai — a face, a voice, a personality — then let other people wear it in their own servers. Renters spend masky credits per use; you keep a cut and cash it out. Favorite masks you love and put them on without owning them.',
   },
   {
     icon: '⚙️',

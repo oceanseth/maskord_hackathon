@@ -44,6 +44,18 @@ export interface Guild {
   createdAt: Timestamp;
   vanityCode: string | null;
   settings: GuildSettings;
+  /** AI-assist config. When `claudeEnabled` is true, the configured masky avatar
+   *  acts as a bot member of this guild — referred to in chat as `@<avatar displayName>`. */
+  claudeEnabled?: boolean;
+  /** Anthropic API key supplied by the server owner. TODO: move to Secret Manager. */
+  claudeApiKey?: string;
+  /** masky.ai developer key (mky_…) supplied by the server owner. Owns the
+   *  per-voice-channel conversation and drives chat-mode voice replies. */
+  maskyApiKey?: string;
+  /** UID of the user who owns the selected avatar. */
+  claudeAvatarOwnerUid?: string;
+  /** masky avatarGroup doc ID. The avatar's displayName becomes the bot's name. */
+  claudeAvatarId?: string;
 }
 
 export interface GuildMember {
@@ -70,11 +82,28 @@ export interface Role {
 
 // ─── Channel ─────────────────────────────────────────────────────────────────
 
-export type ChannelType = 'text' | 'voice' | 'announcement' | 'category';
+export type ChannelType = 'text' | 'voice' | 'announcement' | 'category' | 'live';
 
 export interface PermissionOverwrite {
   allow: number; // bitfield
   deny: number;  // bitfield
+}
+
+/** An AI avatar currently present in a voice channel. Written server-side. */
+export interface ChannelAvatar {
+  ownerUid: string;
+  avatarId: string;
+  displayName: string;
+  thumbnailUrl?: string;
+  humeVoiceId?: string;
+  wakeWord?: string;
+  goodbyeWord?: string;
+  isPrimary?: boolean;
+  /** This avatar's masky.ai conversation in this channel. */
+  conversationId?: string;
+  liveUrl?: string;
+  invitedBy?: string;
+  joinedAt?: number;
 }
 
 export interface Channel {
@@ -91,6 +120,24 @@ export interface Channel {
   messageCount?: number;
   /** Timestamp of the most recent message — set server-side on each send. */
   lastMessageAt?: Timestamp;
+  /** When set, the guild's configured AI avatar participates in this channel.
+   *  `mention` = respond only when @-mentioned. `all` = every message triggers. `off` = disabled. */
+  claudeMode?: 'mention' | 'all' | 'off';
+  /** Only meaningful for voice channels — whether the avatar joins with audio only
+   *  or with a talking-head video stream. */
+  claudeMediaMode?: 'audio' | 'video';
+  /** masky.ai conversation backing this voice channel (set server-side on first
+   *  AI reply). Every voice channel maps to one masky conversation. */
+  maskyConversationId?: string;
+  /** Public share slug (c-yy-mm-XXXX) for the channel's conversation. */
+  maskyShareSlug?: string;
+  /** Embeddable live URL on masky.ai that auto-plays each rendered turn. */
+  maskyLiveUrl?: string;
+  /** Opaque viewer token gating the conversation's live media. */
+  maskyViewerToken?: string;
+  /** AI avatars currently present in this voice channel (server-managed). The
+   *  primary avatar is always present; others join via voice invite. */
+  activeAvatars?: ChannelAvatar[];
 }
 
 // ─── Message ─────────────────────────────────────────────────────────────────
@@ -181,6 +228,62 @@ export interface VoiceState {
   muted: boolean;
   deafened: boolean;
   speaking?: boolean; // updated by VAD/PTT client, read by sidebar for speaking indicators
+  /** When the user is wearing a mask, their shared identity (so everyone — the
+   *  sidebar list and remote tiles — shows the mask, not the real name). */
+  maskName?: string;
+  maskAvatarUrl?: string;
+}
+
+// ─── Live Channel ─────────────────────────────────────────────────────────────
+
+/** Source platform for a live message. */
+export const LiveNetwork = {
+  Twitch:   0,
+  YouTube:  1,
+  Facebook: 2,
+  Maskord:  99, // sent from within Maskord (echoed back)
+} as const;
+export type LiveNetworkValue = typeof LiveNetwork[keyof typeof LiveNetwork];
+
+/**
+ * A single message in a guild's #live channel.
+ * Written by the Cloud Function bridge from users/{uid}/chatMessages.
+ * Path: guilds/{guildId}/liveMessages/{id}
+ */
+export interface LiveMessage {
+  id: string;
+  network: LiveNetworkValue;
+  /** Platform-assigned message ID (for dedup). */
+  platformMsgId: string;
+  /** Display name on the originating platform. */
+  senderName: string;
+  /** Platform user ID (e.g. Twitch chatter_user_id). */
+  senderPlatformId: string;
+  /** Maskord UID if this platform user is also a Maskord user, else null. */
+  senderMaskordUid: string | null;
+  text: string;
+  /** Twitch emote fragments, if present. */
+  fragments: Array<{ type: string; text: string; emote?: { id: string } }> | null;
+  timestamp: Timestamp;
+  lang: string | null;
+}
+
+/**
+ * Live streaming status for a guild owner's stream.
+ * Path: guilds/{guildId}/liveStatus
+ */
+export interface LiveStatus {
+  isLive: boolean;
+  network: LiveNetworkValue;
+  streamTitle: string;
+  viewerCount: number;
+  /** e.g. "https://www.twitch.tv/username" */
+  streamUrl: string;
+  /** Twitch login name (used for embed player). */
+  twitchLogin: string | null;
+  thumbnailUrl: string;
+  startedAt: Timestamp | null;
+  updatedAt: Timestamp;
 }
 
 // ─── Voice Signaling (Realtime DB) ───────────────────────────────────────────

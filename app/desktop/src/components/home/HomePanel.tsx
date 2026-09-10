@@ -95,7 +95,7 @@ export default function HomePanel() {
   }
 
   return (
-    <div className="w-60 flex-shrink-0 bg-[#0e0e16] border-r border-[#1e1e2e] flex flex-col">
+    <div className="w-full md:w-60 md:flex-shrink-0 bg-[#0e0e16] md:border-r border-[#1e1e2e] flex flex-col min-w-0">
       {/* Header */}
       <div className="h-12 flex items-center px-4 border-b border-[#1e1e2e] drag-region flex-shrink-0">
         <span className="font-semibold text-white text-sm no-drag">Home</span>

@@ -54,6 +54,8 @@ export function useVoiceChannel(
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
+  // Set of peer userIds whose WebRTC negotiation is still in progress
+  const [connectingPeers, setConnectingPeers] = useState<Set<string>>(new Set());
 
   const peerConnections = useRef<Map<string, RTCPeerConnection>>(new Map());
   const remoteStreams   = useRef<Map<string, MediaStream>>(new Map());
@@ -127,21 +129,34 @@ export function useVoiceChannel(
 
     log(`join() — channel ${channelId}`);
 
+    // Mark as connected immediately — the user is on the voice channel screen.
+    // Audio setup and RTDB writes happen asynchronously; we don't want async
+    // failures to leave the status bar stuck on "Connecting...".
+    setIsConnected(true);
+
     // Pre-fetch TURN credentials before getting mic so the first peer connection
     // is created with the full ICE server list (including TURN relays).
     await getIceServers();
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: opts?.deviceId
-        ? { ...AUDIO_CONSTRAINTS, deviceId: { exact: opts.deviceId } }
-        : AUDIO_CONSTRAINTS,
-    });
-    log('Got local stream — tracks:', stream.getTracks().map(t => `${t.kind}(${t.label || 'default'})`).join(', '));
-    setLocalStream(stream);
+    // Attempt to capture the microphone. On platforms where getUserMedia is not
+    // available (or the user denies permission) we still join the channel as a
+    // listener — presence is written to RTDB and isConnected becomes true.
+    let stream: MediaStream | null = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: opts?.deviceId
+          ? { ...AUDIO_CONSTRAINTS, deviceId: { exact: opts.deviceId } }
+          : AUDIO_CONSTRAINTS,
+      });
+      log('Got local stream — tracks:', stream.getTracks().map(t => `${t.kind}(${t.label || 'default'})`).join(', '));
+      setLocalStream(stream);
+    } catch (e) {
+      warn('getUserMedia failed — joining as listener (no mic):', e);
+    }
 
     const rtdb = getFirebaseRtdb();
     voiceStateRef.current = ref(rtdb, `voiceState/${guildId}/${channelId}/${localUserId}`);
-    const voiceData: VoiceState = { joinedAt: Date.now(), muted: false, deafened: false };
+    const voiceData: VoiceState = { joinedAt: Date.now(), muted: !stream, deafened: false };
 
     // Register presence — retry once if auth token hasn't propagated to RTDB yet
     const writeVoiceState = async (stateRef: DatabaseReference) => {
@@ -160,20 +175,22 @@ export function useVoiceChannel(
     };
     await writeVoiceState(voiceStateRef.current);
 
-    setIsConnected(true);
-
-    // Initiate calls to everyone already in the channel (one-shot read)
-    const channelRef = ref(rtdb, `voiceState/${guildId}/${channelId}`);
-    onValue(channelRef, async (snap) => {
-      const data = snap.val() as Record<string, VoiceState> | null;
-      const others = Object.keys(data ?? {}).filter(uid => uid !== localUserId);
-      log(`Participants already in channel: [${others.join(', ') || 'none'}]`);
-      for (const remoteUserId of others) {
-        if (!peerConnections.current.has(remoteUserId)) {
-          await initiateCall(guildId, channelId, localUserId, remoteUserId, stream);
+    // Initiate calls to everyone already in the channel (one-shot read).
+    // Skip if we have no mic stream — we'll receive audio but can't send.
+    if (stream) {
+      const channelRef = ref(rtdb, `voiceState/${guildId}/${channelId}`);
+      onValue(channelRef, async (snap) => {
+        const data = snap.val() as Record<string, VoiceState> | null;
+        const others = Object.keys(data ?? {}).filter(uid => uid !== localUserId);
+        log(`Participants already in channel: [${others.join(', ') || 'none'}]`);
+        for (const remoteUserId of others) {
+          if (!peerConnections.current.has(remoteUserId)) {
+            setConnectingPeers((s) => new Set(s).add(remoteUserId));
+            await initiateCall(guildId, channelId, localUserId, remoteUserId, stream);
+          }
         }
-      }
-    }, { onlyOnce: true });
+      }, { onlyOnce: true });
+    }
   }, [guildId, channelId, localUserId]);
 
   // ─── Leave ────────────────────────────────────────────────────────────────────
@@ -201,6 +218,7 @@ export function useVoiceChannel(
     setIsMuted(false);
     setIsDeafened(false);
     setParticipants([]);
+    setConnectingPeers(new Set());
   }, [guildId, channelId, localUserId, localStream]);
 
   // ─── Mute / deafen ───────────────────────────────────────────────────────────
@@ -271,6 +289,14 @@ export function useVoiceChannel(
     set(child(voiceStateRef.current, 'speaking'), speaking).catch(() => {});
   }, []);
 
+  // ─── Mask identity → RTDB (so everyone shows the mask, not the real name) ────
+  const updateMaskIdentity = useCallback((mask: { name: string; avatarUrl?: string } | null) => {
+    const stateRef = voiceStateRef.current;
+    if (!stateRef) return;
+    set(child(stateRef, 'maskName'),      mask?.name ?? null).catch(() => {});
+    set(child(stateRef, 'maskAvatarUrl'), mask?.avatarUrl ?? null).catch(() => {});
+  }, []);
+
   // ─── Listen for incoming calls via per-user inbox ─────────────────────────────
   // Reading the entire voiceSignaling tree is blocked by RTDB rules (root .read: false,
   // individual rooms only readable at $roomId level). Instead the caller writes a small
@@ -306,6 +332,7 @@ export function useVoiceChannel(
       }
 
       log('Answering call from', room.callerId, 'in room', roomId);
+      setConnectingPeers((s) => new Set(s).add(room.callerId));
       await answerCall(roomId, room.callerId, localUserId, room.offer, localStream);
 
       // Remove inbox entry now that we've handled it
@@ -582,6 +609,10 @@ export function useVoiceChannel(
     pc.onconnectionstatechange = () => {
       log(`Connection [${remoteUserId}]:`, pc.connectionState);
 
+      if (pc.connectionState === 'connected') {
+        setConnectingPeers((s) => { const n = new Set(s); n.delete(remoteUserId); return n; });
+      }
+
       if (pc.connectionState === 'failed') {
         peerConnections.current.delete(remoteUserId);
         remoteStreams.current.delete(remoteUserId);
@@ -616,6 +647,7 @@ export function useVoiceChannel(
     isMuted,
     isDeafened,
     isConnected,
+    connectingPeers,
     join,
     leave,
     toggleMute,
@@ -623,6 +655,7 @@ export function useVoiceChannel(
     updateInputDevice,
     replaceAudioTrack,
     updateSpeakingState,
+    updateMaskIdentity,
     reconnectPeers,
   };
 }

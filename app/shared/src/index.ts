@@ -8,6 +8,9 @@ export { firebaseConfig } from './firebase/config';
 // Permissions
 export { Permission, DEFAULT_PERMISSIONS, computeGuildPermissions, computeChannelPermissions, hasPermission } from './utils/permissions';
 
+// Constants
+export { DEFAULT_CLAUDE_AVATAR } from './constants/claudeAvatar';
+
 // Hooks
 export { useAuth } from './hooks/useAuth';
 export { useUserGuilds, useGuild, useGuildMembers, useGuildRoles, useGuildChannels, createGuild, updateGuildSettings, uploadGuildIcon, deleteGuild, leaveGuild, createChannel, updateChannel, deleteChannel, createInvite, joinViaInvite, joinGuildAsMutualFriend } from './hooks/useGuild';
@@ -20,3 +23,6 @@ export { useDmMessages, sendDmMessage, dmChannelId } from './hooks/useDmMessages
 export { useFriendships, friendshipId } from './hooks/useFriendships';
 export { useDmConversations } from './hooks/useDmConversations';
 export { useBulkPresence } from './hooks/useBulkPresence';
+export { useLiveMessages, useLiveStatus } from './hooks/useLive';
+export { useTranscript, appendTranscriptUtterance } from './hooks/useTranscript';
+export type { TranscriptUtterance } from './hooks/useTranscript';

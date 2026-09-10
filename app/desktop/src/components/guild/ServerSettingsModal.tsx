@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { updateGuildSettings, uploadGuildIcon, createInvite } from '@maskord/shared';
 import Modal from '../ui/Modal';
+import AIAssistanceTab from './AIAssistanceTab';
 
 interface Props {
   guildId: string;
@@ -10,7 +11,11 @@ interface Props {
   onClose: () => void;
 }
 
+type Tab = 'overview' | 'ai';
+
 export default function ServerSettingsModal({ guildId, currentName, currentIconUrl, inviterId, onClose }: Props) {
+  const [tab, setTab] = useState<Tab>('overview');
+
   // ─── Name ────────────────────────────────────────────────────────────────────
   const [name, setName]     = useState(currentName);
   const [saving, setSaving] = useState(false);
@@ -95,8 +100,18 @@ export default function ServerSettingsModal({ guildId, currentName, currentIconU
   }
 
   return (
-    <Modal title="Server Settings" onClose={onClose}>
-      <div className="px-6 pb-6 space-y-6">
+    <Modal title="Server Settings" onClose={onClose} width="max-w-2xl">
+      <div className="flex border-b border-[#1e1e2e]">
+        <TabBtn label="Overview"      active={tab === 'overview'} onClick={() => setTab('overview')} />
+        <TabBtn label="AI Assistance" active={tab === 'ai'}       onClick={() => setTab('ai')} />
+      </div>
+      {tab === 'ai' && (
+        <div className="px-6 py-6 max-h-[70vh] overflow-y-auto scrollable">
+          <AIAssistanceTab guildId={guildId} />
+        </div>
+      )}
+      {tab === 'overview' && (
+      <div className="px-6 pb-6 pt-6 space-y-6">
 
         {/* ── Icon ── */}
         <div>
@@ -244,7 +259,23 @@ export default function ServerSettingsModal({ guildId, currentName, currentIconU
         </div>
 
       </div>
+      )}
     </Modal>
+  );
+}
+
+function TabBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-5 py-2.5 text-sm font-medium transition-colors border-b-2 -mb-px
+        ${active
+          ? 'text-white border-violet-500'
+          : 'text-[#6b7280] border-transparent hover:text-[#c8d0e0]'
+        }`}
+    >
+      {label}
+    </button>
   );
 }
 

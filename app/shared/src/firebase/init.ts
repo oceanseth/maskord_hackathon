@@ -1,6 +1,6 @@
 import { initializeApp, getApps, getApp, type FirebaseApp } from 'firebase/app';
-import { getAuth, type Auth } from 'firebase/auth';
-import { getFirestore, initializeFirestore, type Firestore } from 'firebase/firestore';
+import { getAuth, initializeAuth, type Auth, type Persistence } from 'firebase/auth';
+import { getFirestore, initializeFirestore, type Firestore, type FirestoreSettings } from 'firebase/firestore';
 import { getDatabase, type Database } from 'firebase/database';
 import { getStorage, type FirebaseStorage } from 'firebase/storage';
 import { getFunctions, type Functions } from 'firebase/functions';
@@ -13,13 +13,16 @@ let rtdb: Database;
 let storage: FirebaseStorage;
 let functions: Functions;
 
-export function initFirebase() {
+export function initFirebase(options?: { persistence?: Persistence; firestoreSettings?: FirestoreSettings }) {
   app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApp();
-  auth = getAuth(app);
+  auth = options?.persistence
+    ? initializeAuth(app, { persistence: options.persistence })
+    : getAuth(app);
   // experimentalForceLongPolling bypasses QUIC (UDP) which causes ERR_QUIC_PROTOCOL_ERROR
-  // noise in some network environments. Long-polling over TCP is slightly higher latency
-  // but reliable everywhere.
-  db = initializeFirestore(app, { experimentalForceLongPolling: true });
+  // on web/desktop. On React Native the RN build uses a native fetch transport instead —
+  // passing firestoreSettings: {} from mobile skips the long-polling override.
+  const firestoreSettings: FirestoreSettings = options?.firestoreSettings ?? { experimentalForceLongPolling: true };
+  db = initializeFirestore(app, firestoreSettings);
   rtdb = getDatabase(app);
   storage = getStorage(app);
   functions = getFunctions(app);

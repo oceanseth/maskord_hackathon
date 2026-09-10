@@ -43,6 +43,8 @@ export interface VoiceContextValue {
   updateInputDevice: (deviceId: string) => Promise<void>;
   /** Replace the outgoing audio track in all peer connections (avatar voice injection) */
   replaceAudioTrack: (track: MediaStreamTrack | null) => Promise<void>;
+  /** Publish the user's current mask identity so everyone (sidebar + tiles) shows it. */
+  updateMaskIdentity: (mask: { name: string; avatarUrl?: string } | null) => void;
   /** True while the avatar's synthesized voice is being transmitted */
   isAvatarSpeaking: boolean;
   // DM calling
@@ -77,6 +79,7 @@ const VoiceCtx = createContext<VoiceContextValue>({
   hangUp: () => {},
   updateInputDevice: async () => {},
   replaceAudioTrack: async () => {},
+  updateMaskIdentity: () => {},
   isAvatarSpeaking: false,
   isDmCall: false,
   dmCallPartnerId: null,
@@ -105,12 +108,13 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
   const {
     participants, localStream, isMuted, isDeafened, isConnected,
     join, leave, toggleMute, toggleDeafen, updateInputDevice, replaceAudioTrack,
-    updateSpeakingState, reconnectPeers,
+    updateSpeakingState, updateMaskIdentity, reconnectPeers,
   } = useVoiceChannel(voiceGuildId, voiceChannelId, userId);
 
   useMaskyVoice({
     uid:                   userId,
     isConnected,
+    isMuted,
     localStream,
     replaceAudioTrack,
     onAvatarSpeakingChange: setIsAvatarSpeaking,
@@ -403,6 +407,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       hangUp,
       updateInputDevice,
       replaceAudioTrack,
+      updateMaskIdentity,
       isAvatarSpeaking,
       isDmCall,
       dmCallPartnerId,

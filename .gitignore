@@ -70,3 +70,9 @@ coverage/
 
 # Expo
 .expo-shared/
+
+# iOS native
+app/mobile/ios/Pods/
+app/mobile/ios/build/
+**/xcuserdata/
+*.xcuserstate
