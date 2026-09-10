@@ -7,6 +7,15 @@ const TWITCH_CLIENT_ID  = 'sgb17aslo6gesnetuqfnf6qql6jrae';
 const TWITCH_OAUTH_URL  = 'https://us-central1-maskydotnet.cloudfunctions.net/twitchOAuth';
 const isElectron = typeof window !== 'undefined' && 'electron' in window;
 
+/**
+ * Guests have no server of their own, so they are dropped into a shared one via
+ * the normal invite flow. Set VITE_DEFAULT_INVITE_CODE to a permanent, unlimited
+ * invite for that server; the guest button stays hidden until it is set, rather
+ * than signing people into an empty app.
+ */
+const DEFAULT_INVITE_CODE =
+  (import.meta as { env?: Record<string, string> }).env?.VITE_DEFAULT_INVITE_CODE ?? '';
+
 // Web redirect URI — Twitch sends the user back here after authorising.
 // Must be registered in the Twitch developer console AND allowed by the Cloud
 // Function.
@@ -19,7 +28,7 @@ export default function AuthScreen() {
   const [email, setEmail]           = useState('');
   const [password, setPassword]     = useState('');
   const [displayName, setDisplayName] = useState('');
-  const { signIn, signInWithGoogle, register, loading, error } = useAuth();
+  const { signIn, signInWithGoogle, signInAsGuest, register, loading, error } = useAuth();
   const [twitchError, setTwitchError] = useState<string | null>(null);
   const [twitchLoading, setTwitchLoading] = useState(false);
 
@@ -108,6 +117,16 @@ export default function AuthScreen() {
     const vc     = p.get('vc');
     if (invite) sessionStorage.setItem('pending_invite', invite);
     if (vc)     sessionStorage.setItem('pending_vc',     vc);
+  }
+
+  /**
+   * Stash the default invite before signing in, so App.tsx's existing
+   * pending-invite effect joins the shared server on the way through. No new
+   * join path — the same one an invite link uses.
+   */
+  async function handleGuestSignIn() {
+    sessionStorage.setItem('pending_invite', DEFAULT_INVITE_CODE);
+    await signInAsGuest();
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -239,6 +258,18 @@ export default function AuthScreen() {
               <TwitchIcon />
               Continue with Twitch
             </button>
+
+            {/* Guest sign in — hidden until a default server invite is configured,
+                so a guest is never dropped into an app with no servers. */}
+            {DEFAULT_INVITE_CODE && (
+              <button
+                onClick={handleGuestSignIn}
+                disabled={anyLoading}
+                className="w-full mt-2 py-2.5 rounded-lg bg-[#12121a] border border-[#1e1e2e] hover:border-violet-700/50 disabled:opacity-50 text-[#94a3b8] font-medium text-sm transition-colors"
+              >
+                Look around as a guest
+              </button>
+            )}
 
             {twitchError && (
               <p className="text-red-400 text-xs bg-red-900/20 border border-red-800/30 rounded-lg px-3 py-2 mt-2">

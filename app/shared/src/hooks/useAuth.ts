@@ -5,6 +5,7 @@ import {
   createUserWithEmailAndPassword,
   signOut,
   GoogleAuthProvider,
+  signInAnonymously,
   signInWithPopup,
   updateProfile,
   type User as FirebaseUser,
@@ -67,6 +68,21 @@ export function useAuth() {
     }
   }
 
+  /**
+   * Guest sign-in. Anonymous users get a real Firebase uid, so every rule that
+   * checks membership keeps working; they just have no credentials to come back
+   * with. Requires the Anonymous provider to be enabled on the project.
+   */
+  async function signInAsGuest() {
+    setState((s) => ({ ...s, loading: true, error: null }));
+    try {
+      await signInAnonymously(getFirebaseAuth());
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : 'Guest sign in failed';
+      setState((s) => ({ ...s, loading: false, error: msg }));
+    }
+  }
+
   async function register(email: string, password: string, displayName: string) {
     setState((s) => ({ ...s, loading: true, error: null }));
     try {
@@ -87,7 +103,7 @@ export function useAuth() {
     await signOut(getFirebaseAuth());
   }
 
-  return { ...state, signIn, signInWithGoogle, register, logOut };
+  return { ...state, signIn, signInWithGoogle, signInAsGuest, register, logOut };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
