@@ -32,6 +32,8 @@ export interface VoiceContextValue {
   /** True when remote audio playback was blocked by browser autoplay policy */
   needsInteraction: boolean;
   clearNeedsInteraction: () => void;
+  /** Raise the unlock banner — avatar audio blocked by autoplay policy. */
+  reportAudioBlocked: () => void;
   voiceSettings: VoiceSettings;
   updateVoiceSettings: (patch: Partial<VoiceSettings>) => void;
   audioInputs: AudioDevice[];
@@ -76,6 +78,7 @@ const VoiceCtx = createContext<VoiceContextValue>({
   micError: null,
   needsInteraction: false,
   clearNeedsInteraction: () => {},
+  reportAudioBlocked: () => {},
   voiceSettings: DEFAULT_SETTINGS,
   updateVoiceSettings: () => {},
   audioInputs: [],
@@ -418,6 +421,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       micError,
       needsInteraction,
       clearNeedsInteraction: () => setNeedsInteraction(false),
+      reportAudioBlocked: () => setNeedsInteraction(true),
       voiceSettings: settings,
       updateVoiceSettings: updateSettings,
       audioInputs: inputs,

@@ -7,6 +7,8 @@ import { formatDistanceToNow } from 'date-fns';
 import MessageInput from '../channel/MessageInput';
 import MessageAttachments from '../channel/MessageAttachments';
 import { uploadAttachment } from '../../lib/convexUploads';
+import { avatarAudioEl } from '../../lib/avatarAudio';
+import { useVoiceCtx } from './VoiceProvider';
 
 interface AvatarInfo { avatarId: string; displayName: string; thumbnailUrl?: string }
 
@@ -44,6 +46,7 @@ function avatarIdFromUserId(userId: string): string | null {
  */
 export default function ChatPanel({ guildId, channelId, avatarName, avatarsById, textByUtterance, selfMask, onAvatarSpeakingChange }: Props) {
   const { firebaseUser } = useAuth();
+  const { reportAudioBlocked } = useVoiceCtx();
   const { utterances, loading } = useTranscript(guildId, channelId, 80);
 
   const uids = useMemo(
@@ -114,12 +117,19 @@ export default function ChatPanel({ guildId, channelId, avatarName, avatarsById,
     };
     const playAt = (i: number) => {
       if (!mountedRef.current || i >= urls.length) return finish();
-      const el = new Audio(urls[i]);
-      el.setAttribute('data-voice', 'agent');
+      // One element reused for every chunk, unlocked by the first user gesture.
+      // A fresh `new Audio()` per chunk is blocked outright on mobile: iOS only
+      // permits playback on elements a gesture has already started, so each new
+      // element was silently skipped and the avatar appeared mute.
+      const el = avatarAudioEl();
       el.onended = () => playAt(i + 1);
       el.onerror = () => playAt(i + 1); // skip a failed chunk, keep the rest
+      el.src = urls[i];
       el.play().catch((err) => {
-        console.warn('[chat] avatar audio autoplay blocked:', err);
+        console.warn('[chat] avatar audio blocked:', err);
+        // Surface it instead of swallowing it — the same banner that unlocks
+        // remote peer audio also unlocks this.
+        reportAudioBlocked();
         playAt(i + 1);
       });
     };
