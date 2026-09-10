@@ -175,7 +175,7 @@ export async function createChannel(
 export async function updateChannel(
   guildId: string,
   channelId: string,
-  updates: Partial<Pick<Channel, 'name' | 'topic' | 'position' | 'parentId'>>,
+  updates: Partial<Pick<Channel, 'name' | 'topic' | 'position' | 'parentId' | 'claudeMode' | 'claudeMediaMode'>>,
 ): Promise<void> {
   const db = getFirebaseDb();
   await updateDoc(doc(db, 'guilds', guildId, 'channels', channelId), updates as Record<string, unknown>);
@@ -229,7 +229,10 @@ export async function leaveGuild(guildId: string): Promise<void> {
 
 export async function updateGuildSettings(
   guildId: string,
-  updates: Partial<Pick<Guild, 'name' | 'description' | 'iconUrl' | 'settings'>>,
+  updates: Partial<Pick<Guild,
+    | 'name' | 'description' | 'iconUrl' | 'settings'
+    | 'claudeEnabled' | 'claudeApiKey' | 'claudeAvatarOwnerUid' | 'claudeAvatarId'
+  >>,
 ) {
   const db = getFirebaseDb();
   await updateDoc(doc(db, 'guilds', guildId), updates as Record<string, unknown>);

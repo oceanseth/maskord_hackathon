@@ -36,6 +36,7 @@ import UserPanel from '../ui/UserPanel';
 import InviteModal from '../guild/InviteModal';
 import ServerSettingsModal from '../guild/ServerSettingsModal';
 import CreateChannelModal from './CreateChannelModal';
+import ChannelSettingsModal from './ChannelSettingsModal';
 
 interface Props { guildId: string; }
 
@@ -132,6 +133,7 @@ export default function ChannelSidebar({ guildId }: Props) {
   const renameInputRef = useRef<HTMLInputElement>(null);
 
   const [ctxMenu, setCtxMenu] = useState<{ channelId: string; x: number; y: number } | null>(null);
+  const [settingsChannelId, setSettingsChannelId] = useState<string | null>(null);
 
   // DnD state
   const [activeId, setActiveId]   = useState<string | null>(null);
@@ -334,10 +336,12 @@ export default function ChannelSidebar({ guildId }: Props) {
     const voiceUserList = ch.type === 'voice'
       ? Object.entries(guildVoiceState[ch.id] ?? {}).map(([uid, state]) => {
           const profile = voiceProfiles[uid];
+          // When the user is wearing a mask, show the mask identity (shared via
+          // voiceState), not their real name/avatar.
           return {
             uid,
-            name:     profile?.displayName ?? profile?.twitchUsername ?? 'Unknown',
-            avatarUrl: profile?.avatarUrl ?? '',
+            name:     state.maskName ?? profile?.displayName ?? profile?.twitchUsername ?? 'Unknown',
+            avatarUrl: state.maskAvatarUrl ?? profile?.avatarUrl ?? '',
             muted:    state.muted    ?? false,
             deafened: state.deafened ?? false,
             speaking: state.speaking ?? false,
@@ -368,7 +372,7 @@ export default function ChannelSidebar({ guildId }: Props) {
 
   return (
     <>
-      <div className="w-60 flex-shrink-0 bg-[#0e0e16] border-r border-[#1e1e2e] flex flex-col">
+      <div className="w-full md:w-60 md:flex-shrink-0 bg-[#0e0e16] md:border-r border-[#1e1e2e] flex flex-col min-w-0">
 
         {/* Guild header with dropdown */}
         <div className="relative" ref={headerMenuRef}>
@@ -480,7 +484,13 @@ export default function ChannelSidebar({ guildId }: Props) {
               setCtxMenu(null);
             }}
           >
-            Edit Channel
+            Rename
+          </button>
+          <button
+            className="w-full text-left px-3 py-2 text-sm text-[#e2e8f0] hover:bg-[#1e1e2e] transition-colors"
+            onClick={() => { setSettingsChannelId(ctxMenu.channelId); setCtxMenu(null); }}
+          >
+            Channel Settings
           </button>
           <button
             className="w-full text-left px-3 py-2 text-sm text-red-400 hover:bg-red-900/20 transition-colors"
@@ -512,6 +522,17 @@ export default function ChannelSidebar({ guildId }: Props) {
           onCreate={async (name, type, parentId) => { await createChannel(guildId, { name, type, parentId }); }}
         />
       )}
+      {settingsChannelId && (() => {
+        const ch = channels.find((c) => c.id === settingsChannelId);
+        if (!ch) return null;
+        return (
+          <ChannelSettingsModal
+            guildId={guildId}
+            channel={ch}
+            onClose={() => setSettingsChannelId(null)}
+          />
+        );
+      })()}
     </>
   );
 }

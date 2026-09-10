@@ -25,6 +25,31 @@ export function saveSelectedAvatarId(uid: string, groupId: string | null) {
   } catch {}
 }
 
+// "Use Avatar Voice": speak the user's EXACT words in the mask's voice (verbatim).
+const voiceKey = (uid: string) => `maskord_use_avatar_voice_${uid}`;
+export function loadUseAvatarVoice(uid: string): boolean {
+  try { return localStorage.getItem(voiceKey(uid)) === '1'; } catch { return false; }
+}
+export function saveUseAvatarVoice(uid: string, on: boolean) {
+  try {
+    if (on) localStorage.setItem(voiceKey(uid), '1');
+    else    localStorage.removeItem(voiceKey(uid));
+  } catch {}
+}
+
+// "Use Avatar personality": reinterpret the user's words through the selected
+// mask's personality (masky speak+reinterpret) before TTS — voice + reasoning.
+const personalityKey = (uid: string) => `maskord_use_avatar_personality_${uid}`;
+export function loadUseAvatarPersonality(uid: string): boolean {
+  try { return localStorage.getItem(personalityKey(uid)) === '1'; } catch { return false; }
+}
+export function saveUseAvatarPersonality(uid: string, on: boolean) {
+  try {
+    if (on) localStorage.setItem(personalityKey(uid), '1');
+    else    localStorage.removeItem(personalityKey(uid));
+  } catch {}
+}
+
 type SlimGroup = Pick<MaskyAvatarGroup, 'id' | 'displayName' | 'thumbnailUrl'>;
 
 function loadCachedGroups(uid: string): SlimGroup[] {
@@ -83,7 +108,7 @@ export function useMaskyAvatars(uid: string | null) {
   useEffect(() => {
     if (!uid) return;
     const db = getFirebaseDb();
-    const groupsRef = collection(db, 'users', uid, 'heygenAvatarGroups');
+    const groupsRef = collection(db, 'users', uid, 'avatarGroups');
 
     const unsub = onSnapshot(
       groupsRef,
@@ -93,13 +118,13 @@ export function useMaskyAvatars(uid: string | null) {
         await Promise.all(
           snap.docs.map(async (docSnap) => {
             const data = docSnap.data();
-            let thumbnailUrl: string = data.cachedAvatarUrl || data.heygenAvatarUrl || '';
+            let thumbnailUrl: string = data.cachedAvatarUrl || data.avatarUrl || '';
 
             // Fall back to first asset if the group doc has no thumbnail yet.
             if (!thumbnailUrl) {
               try {
                 const assetsRef = collection(
-                  db, 'users', uid, 'heygenAvatarGroups', docSnap.id, 'assets',
+                  db, 'users', uid, 'avatarGroups', docSnap.id, 'assets',
                 );
                 const assetsSnap = await getDocs(query(assetsRef, limit(1)));
                 if (!assetsSnap.empty) {

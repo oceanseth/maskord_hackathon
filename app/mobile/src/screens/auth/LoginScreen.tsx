@@ -7,18 +7,24 @@ import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '@maskord/shared';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import type { AuthStackParamList } from '../../navigation/AuthNavigator';
+import { useTwitchAuth } from '../../hooks/useTwitchAuth';
 
 type Nav = NativeStackNavigationProp<AuthStackParamList, 'Login'>;
 
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
+  const [email, setEmail]     = useState('');
   const [password, setPassword] = useState('');
+
   const { signIn, signInWithGoogle, loading, error } = useAuth();
   const nav = useNavigation<Nav>();
 
-  async function handleLogin() {
-    await signIn(email, password);
+  const { reconnect, loading: twitchLoading, error: twitchError } = useTwitchAuth();
+
+  async function handleTwitchSignIn() {
+    await reconnect();
   }
+
+  const anyLoading = loading || twitchLoading;
 
   return (
     <KeyboardAvoidingView
@@ -70,9 +76,9 @@ export default function LoginScreen() {
           ) : null}
 
           <TouchableOpacity
-            style={[styles.button, loading && styles.buttonDisabled]}
-            onPress={handleLogin}
-            disabled={loading}
+            style={[styles.button, anyLoading && styles.buttonDisabled]}
+            onPress={() => signIn(email, password)}
+            disabled={anyLoading}
           >
             {loading ? (
               <ActivityIndicator color="white" size="small" />
@@ -88,12 +94,33 @@ export default function LoginScreen() {
           </View>
 
           <TouchableOpacity
-            style={styles.secondaryButton}
+            style={[styles.secondaryButton, anyLoading && styles.buttonDisabled]}
             onPress={() => signInWithGoogle()}
-            disabled={loading}
+            disabled={anyLoading}
           >
             <Text style={styles.secondaryButtonText}>Continue with Google</Text>
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.twitchButton, anyLoading && styles.buttonDisabled]}
+            onPress={handleTwitchSignIn}
+            disabled={anyLoading}
+          >
+            {twitchLoading ? (
+              <ActivityIndicator color="#bf94ff" size="small" />
+            ) : (
+              <>
+                <Text style={styles.twitchIcon}>🟣</Text>
+                <Text style={styles.twitchButtonText}>Continue with Twitch</Text>
+              </>
+            )}
+          </TouchableOpacity>
+
+          {twitchError ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{twitchError}</Text>
+            </View>
+          ) : null}
         </View>
 
         <TouchableOpacity onPress={() => nav.navigate('Register')}>
@@ -107,27 +134,30 @@ export default function LoginScreen() {
 }
 
 const styles = StyleSheet.create({
-  container:    { flex: 1, backgroundColor: '#0a0a0f' },
-  scroll:       { flexGrow: 1, justifyContent: 'center', padding: 24 },
-  logoArea:     { alignItems: 'center', marginBottom: 40 },
-  logoBox:      { width: 64, height: 64, borderRadius: 16, backgroundColor: 'rgba(124,58,237,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
-  logoEmoji:    { fontSize: 30 },
-  title:        { fontSize: 24, fontWeight: '700', color: '#ffffff', marginBottom: 4 },
-  subtitle:     { fontSize: 14, color: '#6b7280' },
-  form:         { gap: 12 },
-  field:        { gap: 6 },
-  label:        { fontSize: 10, fontWeight: '600', color: '#94a3b8', letterSpacing: 1 },
-  input:        { backgroundColor: '#12121a', borderWidth: 1, borderColor: '#1e1e2e', borderRadius: 10, padding: 12, color: '#e2e8f0', fontSize: 14 },
-  errorBox:     { backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', borderRadius: 8, padding: 10 },
-  errorText:    { color: '#f87171', fontSize: 12 },
-  button:       { backgroundColor: '#7c3aed', borderRadius: 10, padding: 14, alignItems: 'center', marginTop: 4 },
-  buttonDisabled: { opacity: 0.5 },
-  buttonText:   { color: 'white', fontWeight: '600', fontSize: 15 },
-  divider:      { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  dividerLine:  { flex: 1, height: 1, backgroundColor: '#1e1e2e' },
-  dividerText:  { color: '#6b7280', fontSize: 12 },
-  secondaryButton: { backgroundColor: '#12121a', borderWidth: 1, borderColor: '#1e1e2e', borderRadius: 10, padding: 14, alignItems: 'center' },
+  container:        { flex: 1, backgroundColor: '#0a0a0f' },
+  scroll:           { flexGrow: 1, justifyContent: 'center', padding: 24 },
+  logoArea:         { alignItems: 'center', marginBottom: 40 },
+  logoBox:          { width: 64, height: 64, borderRadius: 16, backgroundColor: 'rgba(124,58,237,0.2)', alignItems: 'center', justifyContent: 'center', marginBottom: 16 },
+  logoEmoji:        { fontSize: 30 },
+  title:            { fontSize: 24, fontWeight: '700', color: '#ffffff', marginBottom: 4 },
+  subtitle:         { fontSize: 14, color: '#6b7280' },
+  form:             { gap: 12 },
+  field:            { gap: 6 },
+  label:            { fontSize: 10, fontWeight: '600', color: '#94a3b8', letterSpacing: 1 },
+  input:            { backgroundColor: '#12121a', borderWidth: 1, borderColor: '#1e1e2e', borderRadius: 10, padding: 12, color: '#e2e8f0', fontSize: 14 },
+  errorBox:         { backgroundColor: 'rgba(239,68,68,0.1)', borderWidth: 1, borderColor: 'rgba(239,68,68,0.3)', borderRadius: 8, padding: 10 },
+  errorText:        { color: '#f87171', fontSize: 12 },
+  button:           { backgroundColor: '#7c3aed', borderRadius: 10, padding: 14, alignItems: 'center', marginTop: 4 },
+  buttonDisabled:   { opacity: 0.5 },
+  buttonText:       { color: 'white', fontWeight: '600', fontSize: 15 },
+  divider:          { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  dividerLine:      { flex: 1, height: 1, backgroundColor: '#1e1e2e' },
+  dividerText:      { color: '#6b7280', fontSize: 12 },
+  secondaryButton:  { backgroundColor: '#12121a', borderWidth: 1, borderColor: '#1e1e2e', borderRadius: 10, padding: 14, alignItems: 'center' },
   secondaryButtonText: { color: '#e2e8f0', fontWeight: '500', fontSize: 15 },
-  switchText:   { textAlign: 'center', color: '#6b7280', fontSize: 14, marginTop: 24 },
-  switchLink:   { color: '#a78bfa', fontWeight: '500' },
+  twitchButton:     { backgroundColor: 'rgba(145,70,255,0.1)', borderWidth: 1, borderColor: 'rgba(145,70,255,0.3)', borderRadius: 10, padding: 14, alignItems: 'center', flexDirection: 'row', justifyContent: 'center', gap: 8 },
+  twitchButtonText: { color: '#bf94ff', fontWeight: '500', fontSize: 15 },
+  twitchIcon:       { fontSize: 16 },
+  switchText:       { textAlign: 'center', color: '#6b7280', fontSize: 14, marginTop: 24 },
+  switchLink:       { color: '#a78bfa', fontWeight: '500' },
 });

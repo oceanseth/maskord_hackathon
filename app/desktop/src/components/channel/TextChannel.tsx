@@ -4,6 +4,9 @@ import type { Message } from '@maskord/shared';
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso';
 import { formatDistanceToNow } from 'date-fns';
 import UserProfilePopover from '../ui/UserProfilePopover';
+import { useAppStore } from '../../store/app';
+import MobileBackButton from '../ui/MobileBackButton';
+import MessageInput from './MessageInput';
 import MessageAttachments from './MessageAttachments';
 import { uploadAttachment } from '../../lib/convexUploads';
 
@@ -18,15 +21,12 @@ export default function TextChannel({ guildId, channelId }: Props) {
   const channelName = channels.find((c) => c.id === channelId)?.name ?? '';
   const { messages, loading, hasMore, loadMore } = useMessages(guildId, channelId);
   const members = useGuildMembers(guildId);
-  const [input, setInput] = useState('');
   const [uploading, setUploading] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState('');
   const virtuosoRef = useRef<VirtuosoHandle>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // Profile popover state
   const [profilePopover, setProfilePopover] = useState<{
@@ -64,18 +64,10 @@ export default function TextChannel({ guildId, channelId }: Props) {
     setProfilePopover({ userId, anchorRect: rect });
   }
 
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    const content = input.trim();
-    if (!content || !firebaseUser) return;
-    setInput('');
-    await sendMessage(guildId, channelId, firebaseUser.uid, content);
-  }
-
   /**
-   * Files go straight to Convex storage; the message that carries them stays in
-   * Firestore. Firestore rules reject an empty message body, so an attachment
-   * sent on its own is captioned with its filename.
+   * Files go straight to Convex storage; the message carrying them stays in
+   * Firestore. Firestore rules reject an empty body, so an attachment sent on
+   * its own is captioned with its filename.
    */
   const sendFiles = useCallback(
     async (files: FileList | File[]) => {
@@ -86,15 +78,7 @@ export default function TextChannel({ guildId, channelId }: Props) {
         setUploading(file.name);
         try {
           const attachment = await uploadAttachment(file);
-          const caption = input.trim();
-          if (caption) setInput('');
-          await sendMessage(
-            guildId,
-            channelId,
-            firebaseUser.uid,
-            caption || file.name,
-            [attachment],
-          );
+          await sendMessage(guildId, channelId, firebaseUser.uid, file.name, [attachment]);
         } catch (err) {
           setUploadError(err instanceof Error ? err.message : 'Upload failed');
         } finally {
@@ -102,14 +86,15 @@ export default function TextChannel({ guildId, channelId }: Props) {
         }
       }
     },
-    [firebaseUser, guildId, channelId, input],
+    [firebaseUser, guildId, channelId],
   );
 
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend(e as unknown as React.FormEvent);
-    }
+  const dragDepth = useRef(0);
+  const hasFiles = (e: React.DragEvent) => e.dataTransfer?.types.includes('Files');
+
+  async function handleSendText(content: string) {
+    if (!firebaseUser) return;
+    await sendMessage(guildId, channelId, firebaseUser.uid, content);
   }
 
   async function handleEdit(msg: Message) {
@@ -118,15 +103,13 @@ export default function TextChannel({ guildId, channelId }: Props) {
     setEditingId(null);
   }
 
-  const dragDepth = useRef(0);
-  const hasFiles = (e: React.DragEvent) => e.dataTransfer?.types.includes('Files');
-
   return (
     <div className="flex-1 flex min-h-0 bg-[#0e0e16]">
       {/* Message area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Channel header */}
         <div className="h-12 flex items-center gap-2 px-4 border-b border-[#1e1e2e] flex-shrink-0">
+          <MobileBackButton onClick={() => useAppStore.getState().setActiveChannel(null, 'text')} />
           <span className="text-[#6b7280] text-lg">#</span>
           <span className="font-semibold text-white text-sm">{channelName}</span>
         </div>
@@ -203,58 +186,15 @@ export default function TextChannel({ guildId, channelId }: Props) {
           )}
         </div>
 
-        {/* Message input */}
-        <div className="px-4 pb-4 flex-shrink-0">
-          {uploadError && (
-            <p className="mb-2 text-xs text-red-400">{uploadError}</p>
-          )}
-          {uploading && (
-            <p className="mb-2 text-xs text-[#6b7280]">Uploading {uploading}…</p>
-          )}
-          <form onSubmit={handleSend}>
-            <div className="flex items-end gap-3 bg-[#1a1a28] rounded-xl px-4 py-3 border border-[#2a2a40]">
-              <button
-                type="button"
-                title="Attach a file"
-                onClick={() => fileInputRef.current?.click()}
-                className="w-8 h-8 rounded-lg hover:bg-[#2a2a40] text-[#6b7280] hover:text-white flex items-center justify-center transition-colors flex-shrink-0"
-              >
-                <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
-                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                </svg>
-              </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                className="hidden"
-                onChange={(e) => {
-                  if (e.target.files?.length) void sendFiles(e.target.files);
-                  e.target.value = '';
-                }}
-              />
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Send a message..."
-                rows={1}
-                className="flex-1 bg-transparent text-white text-sm outline-none resize-none placeholder:text-[#6b7280] selectable"
-                style={{ maxHeight: '200px' }}
-              />
-              <button
-                type="submit"
-                disabled={!input.trim()}
-                className="w-8 h-8 rounded-lg bg-violet-600 hover:bg-violet-500 disabled:opacity-30 flex items-center justify-center transition-colors flex-shrink-0"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="white">
-                  <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
-                </svg>
-              </button>
-            </div>
-          </form>
-        </div>
+        {uploadError && (
+          <p className="px-4 pb-1 text-xs text-red-400">{uploadError}</p>
+        )}
+        <MessageInput
+          placeholder={`Message #${channelName}`}
+          onSend={handleSendText}
+          onAttach={sendFiles}
+          uploading={uploading}
+        />
       </div>
 
       {/* User profile popover */}

@@ -1,11 +1,26 @@
 import * as admin from 'firebase-admin';
 import { onCall, onRequest, HttpsError } from 'firebase-functions/v2/https';
-import { onDocumentDeleted } from 'firebase-functions/v2/firestore';
-import { onValueDeleted } from 'firebase-functions/v2/database';
+import { onDocumentDeleted, onDocumentCreated } from 'firebase-functions/v2/firestore';
+import { onValueDeleted, onValueCreated } from 'firebase-functions/v2/database';
+import { onSchedule } from 'firebase-functions/v2/scheduler';
 import { defineSecret } from 'firebase-functions/params';
 
 admin.initializeApp();
 const db = admin.firestore();
+
+// ─── Claude agent triggers (text-channel messages + voice-channel transcripts) ─
+export {
+  onClaudeChannelMessage, onClaudeTranscriptUtterance,
+  onChannelAiDisabled, onGuildAiDisabled, agentSpeak,
+} from './claudeAgent';
+import { removeAvatarsInvitedBy } from './channelAvatars';
+import { forwardRoomEventToAgents } from './agentbox';
+
+/** Display name for a uid (best-effort) for room events. */
+async function displayNameFor(uid: string): Promise<string> {
+  const d = (await db.doc(`users/${uid}`).get()).data();
+  return (d?.displayName ?? d?.twitchUsername ?? uid.slice(0, 8)) as string;
+}
 
 // ─── Twitch OAuth ─────────────────────────────────────────────────────────────
 
@@ -14,23 +29,18 @@ const twitchClientSecret = defineSecret('TWITCH_CLIENT_SECRET');
 const TWITCH_CLIENT_ID = 'sgb17aslo6gesnetuqfnf6qql6jrae';
 
 const ALLOWED_REDIRECT_URIS = [
-  'http://localhost:2468',                  // Electron desktop app
-  'https://www.maskord.com/app',            // Web app (production)
-  'https://maskord.com/app',                // Web app (apex — redirects to www)
-  'https://hackathon.maskord.com/app',      // Burning Token hackathon build
+  'http://localhost:2468',                      // Electron desktop app
+  'https://www.maskord.com/app',                // Web app (production)
+  'https://maskord.com/app',                    // Web app (apex — redirects to www)
+  'https://www.maskord.com/oauth/twitch',       // iOS / Android mobile app (HTTPS relay)
+  'https://hackathon.maskord.com/app',          // Burning Token hackathon build
 ];
 
 export const twitchOAuth = onRequest(
   {
-    // Both gates matter: the browser cannot read this response unless its origin
-    // is listed here, and the exchange is refused unless the redirect URI is in
-    // ALLOWED_REDIRECT_URIS above.
-    cors: [
-      'https://www.maskord.com',
-      'https://maskord.com',
-      'https://hackathon.maskord.com',
-      /^http:\/\/localhost(:\d+)?$/,
-    ],
+    // Mobile apps send requests with no Origin header; passing true allows any
+    // origin (the allowlist above still gates which redirect URIs are accepted).
+    cors: true,
     secrets: [twitchClientSecret],
   },
   async (req, res) => {
@@ -104,6 +114,15 @@ export const twitchOAuth = onRequest(
       twitchUsername: twitchUser.login,
       ...(twitchUser.email ? { email: twitchUser.email } : {}),
     }, { merge: true });
+
+    // Persist the access token in custom claims so sendLiveChatMessage can use it.
+    // setCustomUserClaims must be called before createCustomToken so the fresh
+    // token is available as soon as the client signs in with the custom token.
+    await admin.auth().setCustomUserClaims(uid, {
+      provider:           'twitch',
+      twitchId:           twitchUser.id,
+      twitchAccessToken:  accessToken,
+    });
 
     const customToken = await admin.auth().createCustomToken(uid, {
       provider:   'twitch',
@@ -205,6 +224,20 @@ export const createGuildFn = onCall(async (request) => {
     type: 'voice',
     position: 1,
     topic: null,
+    slowmode: 0,
+    nsfw: false,
+    parentId: null,
+    permissionOverwrites: {},
+  });
+
+  // #live channel — pinned at position -1 so it always sorts first.
+  // type='live' marks it as non-editable and triggers the live UI.
+  const liveChannelRef = db.collection(`guilds/${guildId}/channels`).doc();
+  batch.set(liveChannelRef, {
+    name: 'live',
+    type: 'live',
+    position: -1,
+    topic: 'Twitch chat & live stream',
     slowmode: 0,
     nsfw: false,
     parentId: null,
@@ -550,14 +583,323 @@ export const getTurnCredentials = onCall(async (request) => {
   ];
 });
 
+// ─── Live Channel ─────────────────────────────────────────────────────────────
+//
+// Network enum (must stay in sync with shared/src/types/index.ts LiveNetwork):
+const LiveNetwork = { Twitch: 0, YouTube: 1, Facebook: 2, Maskord: 99 } as const;
+
+// Module-level app token cache — valid for ~60 days; refresh when expired.
+let cachedAppToken: string | null = null;
+let appTokenExpiry = 0;
+
+async function getTwitchAppToken(clientId: string, clientSecret: string): Promise<string> {
+  if (cachedAppToken && Date.now() < appTokenExpiry) return cachedAppToken;
+  const res = await fetch('https://id.twitch.tv/oauth2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id:     clientId,
+      client_secret: clientSecret,
+      grant_type:    'client_credentials',
+    }),
+  });
+  if (!res.ok) throw new Error(`Twitch token error: ${await res.text()}`);
+  const data = await res.json() as { access_token: string; expires_in: number };
+  cachedAppToken = data.access_token;
+  appTokenExpiry = Date.now() + (data.expires_in - 300) * 1000; // refresh 5 min early
+  return cachedAppToken;
+}
+
+/**
+ * Actively check whether a guild owner is currently live on Twitch and update
+ * the liveStatus doc. Clients call this on mount so the badge/embed is accurate
+ * without waiting for a webhook event from masky.
+ *
+ * Returns the current LiveStatus fields so the caller can use them immediately.
+ */
+export const checkLiveStatus = onCall(
+  { secrets: [twitchClientSecret] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+    const { guildId } = request.data as { guildId: string };
+    if (!guildId) throw new HttpsError('invalid-argument', 'guildId required');
+
+    // Get guild owner's Twitch details
+    const guildSnap = await db.doc(`guilds/${guildId}`).get();
+    if (!guildSnap.exists) throw new HttpsError('not-found', 'Guild not found');
+    const ownerId = guildSnap.data()!.ownerId as string;
+
+    const ownerSnap = await db.doc(`users/${ownerId}`).get();
+    const ownerData = ownerSnap.data();
+    const twitchId    = ownerData?.twitchId    as string | undefined;
+    const twitchLogin = ownerData?.twitchUsername as string | undefined;
+
+    if (!twitchId) {
+      // Owner hasn't connected Twitch — return offline status without writing
+      return { isLive: false, network: 0 };
+    }
+
+    const clientId     = TWITCH_CLIENT_ID;
+    const clientSecret = twitchClientSecret.value();
+    const appToken     = await getTwitchAppToken(clientId, clientSecret);
+
+    const streamRes = await fetch(
+      `https://api.twitch.tv/helix/streams?user_id=${twitchId}`,
+      { headers: { Authorization: `Bearer ${appToken}`, 'Client-Id': clientId } },
+    );
+
+    if (!streamRes.ok) {
+      console.warn('[checkLiveStatus] Helix streams error:', streamRes.status, await streamRes.text());
+      throw new HttpsError('internal', 'Failed to fetch stream status from Twitch');
+    }
+
+    const streamData = await streamRes.json() as {
+      data: Array<{
+        title: string;
+        viewer_count: number;
+        started_at: string;
+        thumbnail_url: string;
+        type: string;
+      }>;
+    };
+
+    const stream    = streamData.data[0];
+    const isLive    = !!stream && stream.type === 'live';
+    const statusDoc = {
+      isLive,
+      network:      0, // Twitch
+      streamTitle:  stream?.title        ?? null,
+      viewerCount:  stream?.viewer_count ?? 0,
+      twitchLogin:  twitchLogin          ?? null,
+      thumbnailUrl: stream?.thumbnail_url?.replace('{width}', '640').replace('{height}', '360') ?? null,
+      startedAt:    isLive ? stream!.started_at : null,
+      updatedAt:    admin.firestore.FieldValue.serverTimestamp(),
+      ...(isLive ? {} : { startedAt: null }),
+    };
+
+    await db.doc(`guilds/${guildId}/_meta/liveStatus`).set(statusDoc, { merge: true });
+
+    console.log(`[checkLiveStatus] guild=${guildId} twitchId=${twitchId} isLive=${isLive} viewers=${stream?.viewer_count ?? 0}`);
+    return { isLive, viewerCount: stream?.viewer_count ?? 0, streamTitle: stream?.title ?? null, twitchLogin };
+  },
+);
+
+/**
+ * Bridge: when masky writes a new chatMessage for a user, normalize it and fan
+ * it out to that user's personal guild's liveMessages subcollection.
+ *
+ * Source path : users/{uid}/chatMessages/{msgId}   (written by masky Lambda)
+ * Target path : guilds/{guildId}/liveMessages/{id}
+ */
+export const onChatMessageCreated = onDocumentCreated(
+  'users/{uid}/chatMessages/{msgId}',
+  async (event) => {
+    const { uid, msgId } = event.params;
+    const data = event.data?.data();
+    if (!data) return;
+
+    // Look up the owner's personal guild
+    const userSnap = await db.doc(`users/${uid}`).get();
+    const guildId  = userSnap.data()?.personalGuildId as string | undefined;
+    if (!guildId) return; // no personal guild yet — skip
+
+    // Resolve the senderMaskordUid: Twitch-authenticated Maskord users have UID
+    // `twitch:{twitchId}`, so we can do a direct doc lookup — no query needed.
+    const chatterId = (data.chatterId ?? data.userId ?? '') as string;
+    let senderMaskordUid: string | null = null;
+    if (chatterId) {
+      const directSnap = await db.doc(`users/twitch:${chatterId}`).get();
+      if (directSnap.exists) {
+        senderMaskordUid = directSnap.id;
+      }
+    }
+
+    const network: number = typeof data.network === 'number' ? data.network : LiveNetwork.Twitch;
+
+    await db.collection(`guilds/${guildId}/liveMessages`).doc(msgId).set({
+      network,
+      platformMsgId:    msgId,
+      senderName:       (data.username ?? data.userName ?? data.chatter_user_name ?? 'Unknown') as string,
+      senderPlatformId: chatterId,
+      senderMaskordUid,
+      text:             (data.messageText ?? data.text ?? data.message?.text ?? '') as string,
+      fragments:        data.fragments ?? null,
+      timestamp:        data.timestamp ?? admin.firestore.FieldValue.serverTimestamp(),
+      lang:             data.detectedLanguage ?? null,
+    });
+  },
+);
+
+/**
+ * TTL cleanup: delete chatMessages older than 30 days.
+ * Runs daily at 03:00 UTC. Processes up to 500 docs per run (repeated runs
+ * catch any backlog). At >500 docs/run Firestore batch limit applies.
+ */
+export const cleanupOldChatMessages = onSchedule('0 3 * * *', async () => {
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const cutoffTs = admin.firestore.Timestamp.fromDate(cutoff);
+
+  // Query across all users' chatMessages subcollections via collectionGroup
+  const snap = await db.collectionGroup('chatMessages')
+    .where('timestamp', '<', cutoffTs)
+    .limit(500)
+    .get();
+
+  if (snap.empty) return;
+
+  const batches: Array<ReturnType<typeof db.batch>> = [];
+  let batch = db.batch();
+  let count = 0;
+
+  for (const docSnap of snap.docs) {
+    batch.delete(docSnap.ref);
+    count++;
+    if (count % 499 === 0) {
+      batches.push(batch);
+      batch = db.batch();
+    }
+  }
+  batches.push(batch);
+  await Promise.all(batches.map((b) => b.commit()));
+  console.log(`[cleanupOldChatMessages] Deleted ${count} documents`);
+});
+
+/**
+ * Also clean up liveMessages beyond 5,000 per guild (keeps Firestore lean).
+ * Runs daily at 03:30 UTC.
+ */
+export const cleanupOldLiveMessages = onSchedule('30 3 * * *', async () => {
+  const guildsSnap = await db.collection('guilds').select().get();
+  await Promise.all(guildsSnap.docs.map(async (guildDoc) => {
+    const ref    = db.collection(`guilds/${guildDoc.id}/liveMessages`);
+    const total  = await ref.count().get();
+    const excess = total.data().count - 5000;
+    if (excess <= 0) return;
+
+    const oldestSnap = await ref
+      .orderBy('timestamp', 'asc')
+      .limit(excess)
+      .get();
+
+    const batch = db.batch();
+    oldestSnap.docs.forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+    console.log(`[cleanupOldLiveMessages] guild=${guildDoc.id} deleted=${excess}`);
+  }));
+});
+
+// updateLiveStatus removed — masky's Lambda writes directly to Firestore via
+// the admin SDK (same maskydotnet project), so no Cloud Function wrapper needed.
+
+/**
+ * Send a message to the live chat on behalf of a Maskord user.
+ * Uses the user's stored Twitch access token (from masky custom claims).
+ *
+ * Payload: { guildId, text, maskPersonalityPrompt? }
+ */
+export const sendLiveChatMessage = onCall(
+  { secrets: [twitchClientSecret] },
+  async (request) => {
+    if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+    const { guildId, text, maskPersonalityPrompt } = request.data as {
+      guildId: string;
+      text: string;
+      maskPersonalityPrompt?: string;
+    };
+
+    if (!text?.trim()) throw new HttpsError('invalid-argument', 'text required');
+
+    const senderId = request.auth.uid;
+
+    // Get the guild to find the owner's Twitch channel
+    const guildSnap = await db.doc(`guilds/${guildId}`).get();
+    if (!guildSnap.exists) throw new HttpsError('not-found', 'Guild not found');
+    const ownerId = guildSnap.data()!.ownerId as string;
+
+    // Get streamer's Twitch ID from their user doc
+    const ownerSnap = await db.doc(`users/${ownerId}`).get();
+    const broadcasterTwitchId = ownerSnap.data()?.twitchId as string | undefined;
+    if (!broadcasterTwitchId) {
+      throw new HttpsError('failed-precondition', 'Server owner has not connected Twitch');
+    }
+
+    // Get sender's Twitch credentials (stored as custom claims by masky OAuth)
+    const senderRecord = await admin.auth().getUser(senderId);
+    const claims = senderRecord.customClaims ?? {};
+    const accessToken   = claims.twitchAccessToken as string | undefined;
+    const senderTwitchId = claims.twitchId as string | undefined;
+
+    if (!accessToken || !senderTwitchId) {
+      throw new HttpsError('failed-precondition', 'TWITCH_NOT_CONNECTED');
+    }
+
+    // Personality rewrite happens on-device before calling this function.
+    // `text` arrives already rewritten. We just send it.
+    const messageText = (maskPersonalityPrompt ? text : text).trim();
+
+    const sendRes = await fetch('https://api.twitch.tv/helix/chat/messages', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Client-Id':     TWITCH_CLIENT_ID,
+        'Content-Type':  'application/json',
+      },
+      body: JSON.stringify({
+        broadcaster_id: broadcasterTwitchId,
+        sender_id:      senderTwitchId,
+        message:        messageText,
+      }),
+    });
+
+    if (!sendRes.ok) {
+      const err = await sendRes.text();
+      console.error('[sendLiveChatMessage] Twitch API error:', err);
+      // 401 = token expired/invalid
+      if (sendRes.status === 401) throw new HttpsError('unauthenticated', 'TWITCH_TOKEN_EXPIRED');
+      throw new HttpsError('internal', 'Failed to send to Twitch chat');
+    }
+
+    // Echo the message into liveMessages immediately so the sender sees it
+    // without waiting for the EventSub webhook to bounce back.
+    const senderSnap = await db.doc(`users/${senderId}`).get();
+    const senderData = senderSnap.data();
+    await db.collection(`guilds/${guildId}/liveMessages`).add({
+      network:          LiveNetwork.Maskord,
+      platformMsgId:    `maskord_${Date.now()}_${senderId}`,
+      senderName:       senderData?.displayName ?? senderData?.twitchUsername ?? 'Unknown',
+      senderPlatformId: senderTwitchId,
+      senderMaskordUid: senderId,
+      text:             messageText,
+      fragments:        null,
+      timestamp:        admin.firestore.FieldValue.serverTimestamp(),
+      lang:             null,
+    });
+
+    return { success: true };
+  },
+);
+
 // ─── Clean up stale voice signaling rooms (older than 1 hour) ─────────────────
 
 export const onVoiceStateDeleted = onValueDeleted(
   'voiceState/{guildId}/{channelId}/{userId}',
   async (event) => {
-    // When last person leaves a channel, clean up orphaned signaling rooms
-    const { guildId, channelId } = event.params;
+    const { guildId, channelId, userId } = event.params;
     const rtdb = admin.database();
+
+    // Tell live agents this user left (before we tear down their avatars).
+    await forwardRoomEventToAgents(guildId, channelId, {
+      type: 'user_left', userId, name: await displayNameFor(userId),
+    }).catch(() => {});
+
+    // When a user leaves the channel, remove any AI avatars they invited.
+    await removeAvatarsInvitedBy(guildId, channelId, userId).catch((e) =>
+      console.warn('[voice] failed to remove invited avatars on leave', e),
+    );
+
+    // When the last person leaves a channel, clean up orphaned signaling rooms.
     const channelSnap = await rtdb.ref(`voiceState/${guildId}/${channelId}`).get();
     if (!channelSnap.exists()) {
       // Channel is empty — clean up old signaling rooms for this channel
@@ -569,5 +911,16 @@ export const onVoiceStateDeleted = onValueDeleted(
         .map(([id]) => id);
       await Promise.all(staleRoomIds.map((id) => rtdb.ref(`voiceSignaling/${id}`).remove()));
     }
+  },
+);
+
+// When a user joins a voice channel, notify any live agents present.
+export const onVoiceStateCreated = onValueCreated(
+  'voiceState/{guildId}/{channelId}/{userId}',
+  async (event) => {
+    const { guildId, channelId, userId } = event.params;
+    await forwardRoomEventToAgents(guildId, channelId, {
+      type: 'user_joined', userId, name: await displayNameFor(userId),
+    }).catch(() => {});
   },
 );

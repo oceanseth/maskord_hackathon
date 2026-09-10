@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { getAuth } from 'firebase/auth';
-import { loadSelectedAvatarId } from './useMaskyAvatars';
+import { loadSelectedAvatarId, loadUseAvatarPersonality, loadUseAvatarVoice } from './useMaskyAvatars';
 import type { MaskyAvatarGroup } from './useMaskyAvatars';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, doc, getDoc } from 'firebase/firestore';
 import { getFirebaseDb } from '@maskord/shared';
 
 const MASKY_API = 'https://masky.ai';
@@ -60,12 +60,14 @@ interface SpeechRecogEvent {
 export function useMaskyVoice({
   uid,
   isConnected,
+  isMuted,
   localStream,
   replaceAudioTrack,
   onAvatarSpeakingChange,
 }: {
   uid: string | null;
   isConnected: boolean;
+  isMuted: boolean;
   localStream: MediaStream | null;
   replaceAudioTrack: (track: MediaStreamTrack | null) => Promise<void>;
   onAvatarSpeakingChange: (speaking: boolean) => void;
@@ -80,6 +82,44 @@ export function useMaskyVoice({
   const recognitionRef      = useRef<SpeechRecog | null>(null);
   const processingRef       = useRef(false); // prevent overlapping requests
   const mountedRef          = useRef(true);
+  // Cache of masky conversations per avatar (for the personality/reinterpret path).
+  const convCacheRef        = useRef<Record<string, { conversationId: string; viewerToken: string }>>({});
+
+  const isMutedRef = useRef(isMuted);
+  useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+
+  // Reactive voicing mode from the persisted toggles (updated live when the
+  // Avatar Settings modal dispatches `maskord-voice-settings-changed`).
+  const [voiceMode, setVoiceMode] = useState<'off' | 'voice' | 'personality'>('off');
+  const voiceModeRef = useRef(voiceMode);
+  useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
+  useEffect(() => {
+    const read = () => {
+      if (!uid) return setVoiceMode('off');
+      setVoiceMode(
+        loadUseAvatarPersonality(uid) ? 'personality'
+        : loadUseAvatarVoice(uid)     ? 'voice'
+        : 'off',
+      );
+    };
+    read();
+    window.addEventListener('maskord-voice-settings-changed', read);
+    return () => window.removeEventListener('maskord-voice-settings-changed', read);
+  }, [uid]);
+
+  // Avatar mode is active when a voiced mask is selected, a mode is on, we're
+  // connected, and not manually muted.
+  const avatarMode = voiceMode !== 'off' && !!selectedGroup?.humeVoiceId && isConnected && !isMuted;
+
+  // While in avatar mode, keep the REAL mic silent for transmission so peers hear
+  // ONLY the rendered avatar audio — never the user's own voice. (STT is driven
+  // by the Web Speech API, which reads the mic independently of this flag.)
+  useEffect(() => {
+    const track = originalTrackRef.current;
+    if (!track) return;
+    if (avatarMode) track.enabled = false;
+    else if (!processingRef.current) track.enabled = !isMuted; // respect manual mute
+  }, [avatarMode, isMuted, localStream]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -105,7 +145,7 @@ export function useMaskyVoice({
     if (!selectedId) { setSelectedGroup(null); return; }
 
     const db = getFirebaseDb();
-    const groupsRef = collection(db, 'users', uid, 'heygenAvatarGroups');
+    const groupsRef = collection(db, 'users', uid, 'avatarGroups');
 
     const unsub = onSnapshot(groupsRef, (snap) => {
       const doc = snap.docs.find((d) => d.id === selectedId);
@@ -116,7 +156,7 @@ export function useMaskyVoice({
         displayName:       data.displayName || 'Avatar',
         personalityPrompt: data.personalityPrompt,
         humeVoiceId:       data.humeVoiceId,
-        thumbnailUrl:      data.cachedAvatarUrl || data.heygenAvatarUrl || '',
+        thumbnailUrl:      data.cachedAvatarUrl || data.avatarUrl || '',
       });
     }, () => setSelectedGroup(null));
 
@@ -169,16 +209,77 @@ export function useMaskyVoice({
     try { rec?.stop(); } catch { /* ignore */ }
   }, []);
 
-  // Start recognition when avatar with voice is active + connected
+  // Run STT only when avatar mode is active (a voiced mask + a mode on + not
+  // muted). When it's off we don't transcribe or replace anything.
   useEffect(() => {
-    const hasVoice = !!selectedGroup?.humeVoiceId;
-    if (hasVoice && isConnected) {
-      startRecognition();
-    } else {
-      stopRecognition();
-    }
+    if (avatarMode) startRecognition();
+    else            stopRecognition();
     return stopRecognition;
-  }, [selectedGroup?.humeVoiceId, isConnected, startRecognition, stopRecognition]);
+  }, [avatarMode, startRecognition, stopRecognition]);
+
+  // ── Reinterpret-with-personality path (masky conversation turn) ──────────────
+
+  /** Lazily create + cache a masky conversation for the user's own mask. */
+  async function ensureConversation(
+    token: string, avatarId: string,
+  ): Promise<{ conversationId: string; viewerToken: string } | null> {
+    const cached = convCacheRef.current[avatarId];
+    if (cached) return cached;
+    try {
+      const res = await fetch(`${MASKY_API}/api/conversations`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body:    JSON.stringify({ avatarOwnerUserId: uid, avatarId }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!data?.conversationId || !data?.viewerToken) return null;
+      const conv = { conversationId: data.conversationId as string, viewerToken: data.viewerToken as string };
+      convCacheRef.current[avatarId] = conv;
+      return conv;
+    } catch { return null; }
+  }
+
+  /**
+   * Speak the line through the mask's personality: inject a speak+reinterpret
+   * turn (Gemini rewrites it in the avatar's persona, then Hume TTS), wait for
+   * the audio to land, and return the MP3 bytes to inject into the call.
+   */
+  async function reinterpretViaConversation(
+    token: string, avatarId: string, text: string,
+  ): Promise<ArrayBuffer | null> {
+    const conv = await ensureConversation(token, avatarId);
+    if (!conv) return null;
+    try {
+      const res = await fetch(`${MASKY_API}/api/conversations/${conv.conversationId}/turn`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body:    JSON.stringify({ userText: text, mode: 'speak', reinterpret: true, output: 'audio' }),
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const turnId: string | undefined = data?.turn?.id
+        ?? (typeof data?.firestorePath === 'string' ? data.firestorePath.split('/').pop() : undefined);
+      if (!turnId) return null;
+
+      // Poll the turn doc (we own the conversation) until the audio is rendered.
+      const turnRef = doc(getFirebaseDb(), 'conversations', conv.conversationId, 'turns', turnId);
+      const deadline = Date.now() + 30_000;
+      let ready = false;
+      while (Date.now() < deadline && mountedRef.current) {
+        const d = (await getDoc(turnRef)).data() as { status?: string; audioStoragePath?: string } | undefined;
+        if (d?.status === 'error') return null;
+        if (d?.audioStoragePath || d?.status === 'audio' || d?.status === 'video' || d?.status === 'ready') { ready = true; break; }
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      if (!ready) return null;
+
+      // Durable, self-re-signing audio URL (public, gated by the viewer token).
+      const audioRes = await fetch(`${MASKY_API}/api/live-media/${conv.viewerToken}/${turnId}/audio`);
+      if (!audioRes.ok) return null;
+      return await audioRes.arrayBuffer();
+    } catch { return null; }
+  }
 
   // ── Speak as avatar ────────────────────────────────────────────────────────
 
@@ -188,6 +289,13 @@ export function useMaskyVoice({
     forUid: string,
   ) {
     if (processingRef.current) return;
+
+    // Which voicing mode? personality (reinterpret) > voice (verbatim) > neither
+    // (keep the user's real voice — don't mute or replace anything).
+    const personalityOn = loadUseAvatarPersonality(forUid);
+    const voiceOn       = loadUseAvatarVoice(forUid);
+    if (!personalityOn && !voiceOn) return;
+
     processingRef.current = true;
     onAvatarSpeakingChange(true);
 
@@ -205,21 +313,28 @@ export function useMaskyVoice({
       // Mute mic so it doesn't bleed through
       if (origTrack) origTrack.enabled = false;
 
-      const response = await fetch(`${MASKY_API}/api/maskord/speak`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
-        },
-        body: JSON.stringify({ avatarGroupId: group.id, text: transcript }),
-      });
-
-      if (!response.ok) {
-        console.warn('[masky-voice] speak API error', response.status);
-        return;
+      // personality → reinterpret the line through the mask's personality
+      // (conversation speak+reinterpret); else verbatim TTS in the mask's voice.
+      let audioBuffer: ArrayBuffer | null;
+      if (personalityOn) {
+        audioBuffer = await reinterpretViaConversation(token, group.id, transcript);
+      } else {
+        const response = await fetch(`${MASKY_API}/api/maskord/speak`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ avatarGroupId: group.id, text: transcript }),
+        });
+        if (!response.ok) {
+          console.warn('[masky-voice] speak API error', response.status);
+          return;
+        }
+        audioBuffer = await response.arrayBuffer();
       }
 
-      const audioBuffer = await response.arrayBuffer();
+      if (!audioBuffer) { console.warn('[masky-voice] no audio rendered'); return; }
       if (!mountedRef.current) return;
 
       // Decode MP3 → play via AudioContext → inject into WebRTC
@@ -245,21 +360,20 @@ export function useMaskyVoice({
     } finally {
       if (!mountedRef.current) return;
 
-      // Restore original mic track
+      // Swap the outgoing track back to the mic — but keep it SILENT while we're
+      // still in avatar mode (peers must never hear the real voice); otherwise
+      // respect the user's manual mute.
       const origTrack = originalTrackRef.current;
       if (origTrack) {
-        origTrack.enabled = !false; // re-enable (VAD will gate it again)
         await replaceAudioTrack(origTrack);
-        origTrack.enabled = true;
+        origTrack.enabled = voiceModeRef.current === 'off' ? !isMutedRef.current : false;
       }
 
       processingRef.current = false;
       onAvatarSpeakingChange(false);
 
-      // Restart STT
-      if (selectedGroupRef.current?.humeVoiceId && isConnected) {
-        startRecognition();
-      }
+      // Restart STT (only meaningful while avatar mode is on).
+      startRecognition();
     }
   }
 

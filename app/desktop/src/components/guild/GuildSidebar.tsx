@@ -57,8 +57,8 @@ export default function GuildSidebar() {
 
   return (
     <div className="w-[72px] flex-shrink-0 bg-[#06060a] border-r border-[#1e1e2e] flex flex-col items-center">
-      {/* Drag region + traffic light spacer */}
-      <div className="h-[46px] w-full flex-shrink-0 drag-region" />
+      {/* Drag region + traffic light spacer (only needed in Electron) */}
+      <div className="h-2 md:h-[46px] w-full flex-shrink-0 drag-region" />
 
       {/* Scrollable guild list */}
       <div className="flex-1 flex flex-col items-center pb-3 gap-2 overflow-y-auto scrollable w-full">

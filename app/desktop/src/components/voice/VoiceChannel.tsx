@@ -1,8 +1,19 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { useAuth, useUserProfiles, createInvite } from '@maskord/shared';
+import { useAuth, useUserProfiles, createInvite, useGuild, useGuildChannels, DEFAULT_CLAUDE_AVATAR } from '@maskord/shared';
+import { useTalkingHead } from '../../hooks/useTalkingHead';
 import { useVoiceCtx } from './VoiceProvider';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
 import Modal from '../ui/Modal';
+import {
+  useMaskyAvatars,
+  loadUseAvatarVoice, saveUseAvatarVoice,
+  loadUseAvatarPersonality, saveUseAvatarPersonality,
+  type MaskyAvatarGroup,
+} from '../../hooks/useMaskyAvatars';
+import { useAppStore } from '../../store/app';
+import MobileBackButton from '../ui/MobileBackButton';
+import ChatPanel from './ChatPanel';
+import { useBrowserSTT } from '../../hooks/useBrowserSTT';
 import { inviteUrl as buildInviteUrl } from '../../lib/appUrl';
 
 interface Props {
@@ -17,11 +28,25 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
   const {
     participants, localStream, isMuted, isDeafened, isConnected, localSpeaking,
     micError, voiceSettings, updateVoiceSettings, audioInputs, audioOutputs,
-    refreshDevices, toggleMute, toggleDeafen, hangUp, updateInputDevice,
+    refreshDevices, toggleMute, toggleDeafen, hangUp, updateInputDevice, updateMaskIdentity,
   } = useVoiceCtx();
 
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen]           = useState(false);
+  const [avatarSettingsOpen, setAvatarSettingsOpen] = useState(false);
   const { needsInteraction, clearNeedsInteraction } = useVoiceCtx();
+
+  const { avatarGroups, selectedId, setSelected } =
+    useMaskyAvatars(firebaseUser?.uid ?? null);
+
+  // The user's chosen mask (if any) — drives their displayed identity in the
+  // transcript, their own presence tile, AND (shared via voiceState) the left
+  // channel list + everyone else's view of them.
+  const selectedMask = avatarGroups.find((g) => g.id === selectedId);
+
+  useEffect(() => {
+    if (!isConnected) return;
+    updateMaskIdentity(selectedMask ? { name: selectedMask.displayName, avatarUrl: selectedMask.thumbnailUrl } : null);
+  }, [isConnected, selectedMask?.id, selectedMask?.displayName, selectedMask?.thumbnailUrl, updateMaskIdentity]);
 
   const participantIds = participants.map((p) => p.userId);
   const allIds = useMemo(() => {
@@ -42,10 +67,81 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
 
   const selfInfo = firebaseUser ? getMemberInfo(firebaseUser.uid) : null;
 
+  // ─── Voice channel transcript + Claude integration ──────────────────────────
+  // Active when the channel has AI assistance enabled and the guild has it on.
+  const { guild } = useGuild(guildId);
+  const channels  = useGuildChannels(guildId);
+  const channel   = channels.find((c) => c.id === channelId);
+  const transcriptOn =
+    !!guild?.claudeEnabled &&
+    !!channel &&
+    (channel.claudeMode === 'mention' || channel.claudeMode === 'all');
+
+  const aiAvatarOwnerUid = guild?.claudeAvatarOwnerUid ?? DEFAULT_CLAUDE_AVATAR.ownerUid;
+  const aiAvatarId       = guild?.claudeAvatarId       ?? DEFAULT_CLAUDE_AVATAR.avatarId;
+  const aiAvatars        = useMaskyAvatars(transcriptOn ? aiAvatarOwnerUid : null);
+  const configuredPrimary = aiAvatars.avatarGroups.find((a) => a.id === aiAvatarId);
+
+  // Avatars present in this channel. The primary isn't persisted until the first
+  // utterance, so fall back to the guild-configured avatar for display.
+  const displayedAvatars = useMemo(() => {
+    const active = channel?.activeAvatars ?? [];
+    if (active.length > 0) {
+      return active.map((a) => ({
+        avatarId:     a.avatarId,
+        displayName:  a.displayName,
+        thumbnailUrl: a.thumbnailUrl ?? '',
+        liveUrl:      a.liveUrl,
+        isPrimary:    !!a.isPrimary,
+      }));
+    }
+    if (!transcriptOn) return [];
+    return [{
+      avatarId:     aiAvatarId,
+      displayName:  configuredPrimary?.displayName ?? DEFAULT_CLAUDE_AVATAR.fallbackDisplayName,
+      thumbnailUrl: configuredPrimary?.thumbnailUrl ?? '',
+      liveUrl:      channel?.maskyLiveUrl,
+      isPrimary:    true,
+    }];
+  }, [channel?.activeAvatars, channel?.maskyLiveUrl, transcriptOn, aiAvatarId, configuredPrimary]);
+
+  const primary        = displayedAvatars.find((a) => a.isPrimary) ?? displayedAvatars[0];
+  const primaryName    = primary?.displayName ?? DEFAULT_CLAUDE_AVATAR.fallbackDisplayName;
+  // `since=now` so opening the live page only plays NEW turns (no recap of the
+  // whole conversation). liveUrl already carries `?token=…`, so append with `&`.
+  const primaryLiveUrl = primary?.liveUrl
+    ? `${primary.liveUrl}${primary.liveUrl.includes('?') ? '&' : '?'}since=now`
+    : undefined;
+  const avatarsById    = useMemo(
+    () => Object.fromEntries(displayedAvatars.map((a) => [a.avatarId, a])),
+    [displayedAvatars],
+  );
+
+  // The avatarId currently speaking (audio playing), so we pulse the right tile.
+  const [speakingAvatarId, setSpeakingAvatarId] = useState<string | null>(null);
+
+  // Talking-head video playback (when a channel is in "talking head" mode the
+  // avatar reply renders a video; we play it inside the speaking avatar's tile).
+  const { videoSpeakingId, videoSrc, handleVideoEnded, textByUtterance } =
+    useTalkingHead(transcriptOn ? guildId : null, transcriptOn ? channelId : null);
+
+  // Stream local STT into the channel transcript while the user is connected
+  // and AI assistance is on. Other peers see your utterances appear live.
+  // Pause while muted so we're not transcribing dead air or side conversations.
+  useBrowserSTT({
+    guildId,
+    channelId,
+    userId:  firebaseUser?.uid ?? null,
+    enabled: transcriptOn && isConnected && !isMuted,
+    maskName:      selectedMask?.displayName,
+    maskAvatarUrl: selectedMask?.thumbnailUrl,
+  });
+
   return (
     <div className="flex-1 flex flex-col bg-[#0e0e16]">
       {/* Header */}
       <div className="h-12 flex items-center gap-2 px-4 border-b border-[#1e1e2e]">
+        <MobileBackButton onClick={() => useAppStore.getState().setActiveChannel(null, 'voice')} />
         <svg width="18" height="18" viewBox="0 0 24 24" fill="rgba(168,85,247,0.8)">
           <path d="M12 3a9 9 0 0 1 9 9h-2a7 7 0 0 0-7-7V3zm0 4a5 5 0 0 1 5 5h-2a3 3 0 0 0-3-3V7zm-1 5.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5-1.5-.67-1.5-1.5zM3 11h2a7 7 0 0 0 7 7v2a9 9 0 0 1-9-9z" />
         </svg>
@@ -59,6 +155,20 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
           <span className="ml-1 text-xs text-violet-400 bg-violet-900/20 px-2 py-0.5 rounded-full">
             PTT: {voiceSettings.pttKey.replace('Key', '')}
           </span>
+        )}
+        {primaryLiveUrl && (
+          <a
+            href={primaryLiveUrl}
+            target="_blank"
+            rel="noreferrer"
+            title="Open this channel's masky.ai conversation"
+            className="ml-auto text-xs text-violet-300 hover:text-violet-200 bg-violet-900/20 hover:bg-violet-900/40 px-2 py-0.5 rounded-full transition-colors flex items-center gap-1"
+          >
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7zM5 5h5V3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-5h-2v5H5V5z" />
+            </svg>
+            Live on masky.ai
+          </a>
         )}
       </div>
 
@@ -90,27 +200,36 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
         </button>
       )}
 
-      {/* Participant grid */}
-      <div className="flex-1 p-6 overflow-y-auto">
+      {/* Participant grid — scrolls on its own so it never pushes the chat or
+          controls off-screen as more people join (min-h-0 lets a flex child
+          actually shrink + scroll instead of growing to fit its content). */}
+      <div className="flex-1 min-h-0 p-6 overflow-y-auto">
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr">
-          {/* Local user tile */}
-          {selfInfo && firebaseUser && (
-            <ParticipantTile
-              userId={firebaseUser.uid}
-              name={selfInfo.name}
-              avatarUrl={selfInfo.avatarUrl}
-              stream={localStream}
-              isMuted={isMuted}
-              speaking={localSpeaking && !isMuted}
-              isSelf
-            />
-          )}
+          {/* Local user tile — when a mask is on, show ONLY the mask identity. */}
+          {selfInfo && firebaseUser && (() => {
+            const selfAvatarUrl = selectedMask?.thumbnailUrl || selfInfo.avatarUrl;
+            return (
+              <ParticipantTile
+                userId={firebaseUser.uid}
+                name={selectedMask?.displayName ?? selfInfo.name}
+                avatarUrl={selfAvatarUrl}
+                stream={localStream}
+                isMuted={isMuted}
+                speaking={localSpeaking && !isMuted}
+                isSelf
+                onGearClick={() => setAvatarSettingsOpen(true)}
+              />
+            );
+          })()}
 
-          {/* Remote participants */}
+          {/* Remote participants — when they're masked, show ONLY their mask
+              identity (shared via voiceState); never their real name/avatar. */}
           {participants
             .filter((p) => p.userId !== firebaseUser?.uid)
             .map((p) => {
-              const { name, avatarUrl } = getMemberInfo(p.userId);
+              const info = getMemberInfo(p.userId);
+              const name      = p.state.maskName ?? info.name;
+              const avatarUrl = p.state.maskAvatarUrl ?? info.avatarUrl;
               return (
                 <ParticipantTile
                   key={p.userId}
@@ -123,6 +242,22 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
               );
             })}
 
+          {/* AI avatars — synthetic participants (one tile each). No MediaStream;
+              the audio fanout happens via the transcript panel's <audio> playback. */}
+          {displayedAvatars.map((a) => (
+            <ParticipantTile
+              key={`bot:${a.avatarId}`}
+              userId={`bot:${guildId}:${a.avatarId}`}
+              name={a.displayName}
+              avatarUrl={a.thumbnailUrl}
+              stream={null}
+              isMuted={false}
+              speaking={speakingAvatarId === a.avatarId || videoSpeakingId === a.avatarId}
+              videoSrc={videoSpeakingId === a.avatarId ? videoSrc : null}
+              onVideoEnded={handleVideoEnded}
+            />
+          ))}
+
           {/* Invite tile */}
           {firebaseUser && (
             <InviteTile guildId={guildId} channelId={channelId} inviterId={firebaseUser.uid} />
@@ -130,8 +265,21 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
         </div>
       </div>
 
+      {/* Chat panel — shown when AI assistance is on for this channel */}
+      {transcriptOn && (
+        <ChatPanel
+          guildId={guildId}
+          channelId={channelId}
+          avatarName={primaryName}
+          avatarsById={avatarsById}
+          textByUtterance={textByUtterance}
+          selfMask={selectedMask ? { name: selectedMask.displayName, avatarUrl: selectedMask.thumbnailUrl } : undefined}
+          onAvatarSpeakingChange={setSpeakingAvatarId}
+        />
+      )}
+
       {/* Voice controls bar */}
-      <div className="border-t border-[#1e1e2e] bg-[#0a0a12] px-4 py-3 flex items-center justify-center gap-4">
+      <div className="flex-shrink-0 border-t border-[#1e1e2e] bg-[#0a0a12] px-4 py-3 flex items-center justify-center gap-4">
         <VoiceButton
           active={!isMuted}
           activeColor="bg-violet-600 hover:bg-violet-500"
@@ -186,6 +334,17 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
           onUpdate={updateVoiceSettings}
           onInputDeviceChange={updateInputDevice}
           onClose={() => setSettingsOpen(false)}
+        />
+      )}
+
+      {/* Avatar settings */}
+      {avatarSettingsOpen && firebaseUser && (
+        <AvatarSettingsModal
+          uid={firebaseUser.uid}
+          avatarGroups={avatarGroups}
+          selectedId={selectedId}
+          onSelect={setSelected}
+          onClose={() => setAvatarSettingsOpen(false)}
         />
       )}
     </div>
@@ -371,48 +530,79 @@ interface TileProps {
   avatarUrl: string;
   stream: MediaStream | null | undefined;
   isMuted: boolean;
-  speaking?: boolean;   // explicit override (local user)
+  speaking?: boolean;   // explicit override (local user / AI avatars)
   isSelf?: boolean;
+  maskName?: string;
+  onGearClick?: () => void;
+  videoSrc?: string | null;        // talking-head video to play in this tile
+  onVideoEnded?: () => void;
 }
 
-function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingOverride, isSelf }: TileProps) {
+function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingOverride, isSelf, maskName, onGearClick, videoSrc, onVideoEnded }: TileProps) {
   const initials = name.substring(0, 2).toUpperCase();
 
   // For remote participants: detect speaking locally via AudioContext
   const remoteSpeaking = useSpeakingDetector(isSelf ? null : stream);
-  const speaking = isSelf ? (speakingOverride ?? false) : (remoteSpeaking && !isMuted);
+  // An explicit override (local user, AI avatars) wins; otherwise use detection.
+  const speaking = speakingOverride ?? (remoteSpeaking && !isMuted);
 
   // Note: audio playback is handled by PersistentAudio inside VoiceProvider so it
   // survives switching to text channels. No <audio> element is needed here.
 
   return (
     <div className={`
-      aspect-square rounded-2xl flex flex-col items-center justify-center gap-3
-      bg-[#12121a] border transition-all relative overflow-hidden
+      aspect-square rounded-2xl border transition-all relative overflow-hidden bg-violet-600/20
       ${isSelf ? 'border-violet-700/50' : 'border-[#1e1e2e]'}
       ${speaking ? 'ring-2 ring-green-500 ring-offset-2 ring-offset-[#0e0e16]' : ''}
     `}>
 
-      {/* Avatar */}
-      <div className={`
-        w-16 h-16 rounded-full border-2 overflow-hidden flex items-center justify-center flex-shrink-0 transition-colors
-        ${speaking ? 'border-green-500 bg-green-900/20' : 'border-violet-600/50 bg-violet-600/30'}
-      `}>
-        {avatarUrl
-          ? <img src={avatarUrl} alt={name} className="w-full h-full object-cover" />
-          : <span className="font-bold text-xl text-violet-300">{initials}</span>
-        }
-      </div>
+      {/* Talking-head video (when present) plays over the still; remounts per
+          chunk via `key` so each chunk autoplays. Carries its own audio. */}
+      {videoSrc ? (
+        <video
+          key={videoSrc}
+          src={videoSrc}
+          autoPlay
+          playsInline
+          onEnded={onVideoEnded}
+          onError={onVideoEnded}
+          className="absolute inset-0 w-full h-full object-cover"
+        />
+      ) : avatarUrl ? (
+        <img src={avatarUrl} alt={name} className="absolute inset-0 w-full h-full object-cover" />
+      ) : (
+        <div className="absolute inset-0 flex items-center justify-center bg-violet-600/30">
+          <span className="font-bold text-5xl text-violet-200">{initials}</span>
+        </div>
+      )}
 
-      <span className="text-sm font-medium text-white truncate px-2 max-w-full">
-        {name}{isSelf ? ' (you)' : ''}
-      </span>
+      {/* Name bar — sits on top of the image */}
+      <div className="absolute left-0 right-0 bottom-0 bg-black/65 backdrop-blur-sm px-3 py-2">
+        <p className="text-sm font-medium text-white truncate leading-tight">
+          {name}{isSelf ? ' (you)' : ''}
+        </p>
+        {maskName && (
+          <p className="text-[11px] text-violet-300 truncate leading-tight">{maskName}</p>
+        )}
+      </div>
 
       {/* Muted indicator */}
       {isMuted && (
-        <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-red-700 flex items-center justify-center">
+        <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-red-700 flex items-center justify-center shadow-lg">
           <MutedIcon />
         </div>
+      )}
+
+      {/* Gear button (self only) — top-left so it doesn't fight with name bar or mute */}
+      {isSelf && onGearClick && (
+        <button
+          onClick={onGearClick}
+          title="Avatar Settings"
+          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/55 backdrop-blur-sm border border-white/15
+            flex items-center justify-center text-white hover:bg-violet-600/80 hover:border-violet-400 transition-colors"
+        >
+          <GearIcon />
+        </button>
       )}
     </div>
   );
@@ -613,6 +803,272 @@ function execCommandCopy(text: string) {
   el.select();
   document.execCommand('copy');
   document.body.removeChild(el);
+}
+
+// ─── Avatar Settings Modal ────────────────────────────────────────────────────
+
+interface AvatarSettingsModalProps {
+  uid: string;
+  avatarGroups: MaskyAvatarGroup[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+  onClose: () => void;
+}
+
+function AvatarSettingsModal({ uid, avatarGroups, selectedId, onSelect, onClose }: AvatarSettingsModalProps) {
+  const [talkingAvatar,  setTalkingAvatar]  = useState(false);
+  // Persisted voicing modes for the user's own mask.
+  const [useAvatarVoice, setUseAvatarVoice]  = useState(() => loadUseAvatarVoice(uid));
+  const [usePersonality, setUsePersonality]  = useState(() => loadUseAvatarPersonality(uid));
+
+  const selectedAvatar = avatarGroups.find((g) => g.id === selectedId);
+
+  function requireVoiceCapableMask(): boolean {
+    if (!selectedAvatar) { alert('Select a mask first to use its voice.'); return false; }
+    if (!selectedAvatar.humeVoiceId) {
+      alert('This avatar doesn\'t have a voice set up yet. Add one at masky.ai first.');
+      return false;
+    }
+    return true;
+  }
+
+  function toggleUseAvatarVoice() {
+    if (!useAvatarVoice && !requireVoiceCapableMask()) return;
+    setUseAvatarVoice((v) => {
+      const next = !v;
+      saveUseAvatarVoice(uid, next);
+      // personality and verbatim are mutually exclusive modes; turning one on
+      // turns the other off so the reactive mode is unambiguous.
+      if (next && usePersonality) { setUsePersonality(false); saveUseAvatarPersonality(uid, false); }
+      window.dispatchEvent(new Event('maskord-voice-settings-changed'));
+      return next;
+    });
+  }
+
+  function toggleUsePersonality() {
+    if (!usePersonality && !requireVoiceCapableMask()) return;
+    setUsePersonality((v) => {
+      const next = !v;
+      saveUseAvatarPersonality(uid, next);
+      if (next && useAvatarVoice) { setUseAvatarVoice(false); saveUseAvatarVoice(uid, false); }
+      window.dispatchEvent(new Event('maskord-voice-settings-changed'));
+      return next;
+    });
+  }
+
+  function handleTalkingAvatar() {
+    if (!talkingAvatar) {
+      const upgrade = window.confirm(
+        'Talking Avatar requires an active masky.ai membership.\n\nOpen masky.ai to upgrade?',
+      );
+      if (upgrade) window.open('https://masky.ai', '_blank');
+      return;
+    }
+    setTalkingAvatar((v) => !v);
+  }
+
+  return (
+    <Modal title="Avatar Settings" onClose={onClose}>
+      <div className="px-6 pb-6 space-y-6 max-h-[80vh] overflow-y-auto">
+
+        {/* Mask features — at the top so they're visible above a long mask list */}
+        <div className="space-y-2">
+          <p className="text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider">Mask Features</p>
+          <div className="space-y-1.5">
+            <CheckboxRow
+              label="Use Avatar Voice"
+              sublabel="Speak your exact words in this mask's voice"
+              checked={useAvatarVoice}
+              onToggle={toggleUseAvatarVoice}
+            />
+            <CheckboxRow
+              label="Use Avatar personality"
+              sublabel="Reinterpret what you say through this mask's personality, then speak it in its voice"
+              checked={usePersonality}
+              onToggle={toggleUsePersonality}
+            />
+            <ToggleOptionRow
+              label="Talking Avatar"
+              sublabel="Animate your mask in video (Pro)"
+              value={talkingAvatar}
+              onToggle={handleTalkingAvatar}
+              proFeature
+            />
+          </div>
+        </div>
+
+        {/* Mask selector */}
+        <div className="space-y-2">
+          <p className="text-[11px] font-semibold text-[#6b7280] uppercase tracking-wider">Active Mask</p>
+          <div className="space-y-1.5">
+            {/* None option */}
+            <AvatarOptionRow
+              label="None"
+              sublabel="Use your real identity"
+              selected={!selectedId}
+              onSelect={() => onSelect(null)}
+            />
+            {avatarGroups.length === 0 ? (
+              <div className="px-4 py-3 rounded-xl bg-[#0a0a12] border border-[#1e1e2e] text-sm text-[#6b7280]">
+                No avatars found.{' '}
+                <a
+                  href="https://masky.ai"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-violet-400 hover:underline"
+                >
+                  Create one at masky.ai →
+                </a>
+              </div>
+            ) : (
+              avatarGroups.map((g) => (
+                <AvatarOptionRow
+                  key={g.id}
+                  thumbnailUrl={g.thumbnailUrl}
+                  label={g.displayName}
+                  sublabel={g.personalityPrompt?.slice(0, 72) ?? 'No personality set'}
+                  hasVoice={!!g.humeVoiceId}
+                  selected={selectedId === g.id}
+                  onSelect={() => onSelect(g.id)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="flex justify-end pt-1">
+          <button
+            onClick={onClose}
+            className="px-4 py-2 rounded-lg text-sm text-[#94a3b8] hover:text-white hover:bg-[#1e1e2e] transition-colors"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function AvatarOptionRow({
+  thumbnailUrl, label, sublabel, hasVoice, selected, onSelect,
+}: {
+  thumbnailUrl?: string;
+  label: string;
+  sublabel?: string;
+  hasVoice?: boolean;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const initials = label.substring(0, 2).toUpperCase();
+  return (
+    <button
+      onClick={onSelect}
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-colors ${
+        selected
+          ? 'border-violet-600/50 bg-violet-900/10'
+          : 'border-[#1e1e2e] bg-[#0a0a12] hover:border-violet-600/30'
+      }`}
+    >
+      <div className="w-9 h-9 rounded-full bg-violet-600/20 border border-violet-600/30 overflow-hidden flex items-center justify-center flex-shrink-0">
+        {thumbnailUrl
+          ? <img src={thumbnailUrl} alt={label} className="w-full h-full object-cover" />
+          : <span className="text-xs font-bold text-violet-300">{initials}</span>
+        }
+      </div>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className={`text-sm font-semibold truncate ${selected ? 'text-white' : 'text-[#94a3b8]'}`}>
+            {label}
+          </span>
+          {hasVoice && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-900/30 text-violet-400 flex-shrink-0">
+              Voice
+            </span>
+          )}
+        </div>
+        {sublabel && (
+          <span className="text-xs text-[#4b5563] truncate block">{sublabel}</span>
+        )}
+      </div>
+      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+        selected ? 'border-violet-500' : 'border-[#2a2a3e]'
+      }`}>
+        {selected && <div className="w-2 h-2 rounded-full bg-violet-500" />}
+      </div>
+    </button>
+  );
+}
+
+function CheckboxRow({
+  label, sublabel, checked, onToggle,
+}: {
+  label: string;
+  sublabel?: string;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border text-left transition-colors ${
+        checked ? 'border-violet-500 bg-violet-900/10' : 'border-[#1e1e2e] bg-[#0a0a12] hover:border-violet-600/30'
+      }`}
+    >
+      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+        checked ? 'border-violet-500 bg-violet-600' : 'border-[#2a2a3e] bg-transparent'
+      }`}>
+        {checked && (
+          <svg width="10" height="8" viewBox="0 0 10 8" fill="none">
+            <path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </div>
+      <div className="flex-1 min-w-0">
+        <span className="text-sm font-semibold text-white">{label}</span>
+        {sublabel && <span className="text-xs text-[#4b5563] block leading-snug mt-0.5">{sublabel}</span>}
+      </div>
+    </button>
+  );
+}
+
+function ToggleOptionRow({
+  label, sublabel, value, onToggle, proFeature,
+}: {
+  label: string;
+  sublabel?: string;
+  value: boolean;
+  onToggle: () => void;
+  proFeature?: boolean;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl border border-[#1e1e2e] bg-[#0a0a12] hover:border-violet-600/30 text-left transition-colors"
+    >
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-[#e2e8f0]">{label}</span>
+          {proFeature && (
+            <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-900/20 text-amber-400 flex-shrink-0">
+              PRO
+            </span>
+          )}
+        </div>
+        {sublabel && (
+          <span className="text-xs text-[#4b5563]">{sublabel}</span>
+        )}
+      </div>
+      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+        value ? 'border-violet-500 bg-violet-600' : 'border-[#2a2a3e] bg-transparent'
+      }`}>
+        {value && (
+          <svg width="10" height="8" viewBox="0 0 10 8" fill="white">
+            <path d="M1 4l3 3 5-6" stroke="white" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+      </div>
+    </button>
+  );
 }
 
 // ─── Icons ────────────────────────────────────────────────────────────────────

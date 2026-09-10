@@ -12,6 +12,7 @@ import {
 import { useAppStore } from '../../store/app';
 import { useVoiceCtx } from './VoiceProvider';
 import { saveDmLastSeen } from '../../hooks/useDmUnread';
+import MobileBackButton from '../ui/MobileBackButton';
 
 interface Props {
   partnerUid: string;
@@ -129,6 +130,8 @@ export default function DmPanel({ partnerUid }: Props) {
     <div className="flex-1 flex flex-col bg-[#0e0e16] min-w-0">
       {/* Header */}
       <div className="h-12 flex items-center gap-3 px-4 border-b border-[#1e1e2e] flex-shrink-0">
+        <MobileBackButton onClick={closeDm} />
+
         {/* Avatar */}
         <div className="w-8 h-8 rounded-full bg-violet-600/30 overflow-hidden flex items-center justify-center flex-shrink-0">
           {partner?.avatarUrl
