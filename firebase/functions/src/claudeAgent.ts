@@ -435,6 +435,118 @@ async function captureStream(
   }
 }
 
+// ─── masky.ai account tools ───────────────────────────────────────────────────
+//
+// The avatar can manage the *asking user's* masky account — create avatars,
+// render images, list voices — using that user's own key, the same key invited
+// avatars are already voiced with. The API reference is fetched on demand rather
+// than carried in every prompt, the same way attachments are.
+
+const MASKY_API_BASE = 'https://masky.ai/api';
+const MASKY_SKILL_URL = 'https://masky.ai/skill.md';
+
+/**
+ * What the avatar is allowed to touch on someone's account. Deliberately not
+ * the whole API: this is an authenticated key on a real account, and a model
+ * that wanders into OAuth client registration or unbounded video rendering is
+ * spending someone's money and identity, not its own.
+ */
+const MASKY_ALLOWED: Array<{ method: string; path: RegExp }> = [
+  { method: 'GET',   path: /^\/avatars$/ },
+  { method: 'POST',  path: /^\/avatars$/ },
+  { method: 'PATCH', path: /^\/avatars\/[\w-]+$/ },
+  { method: 'GET',   path: /^\/avatars\/[\w-]+\/images$/ },
+  { method: 'GET',   path: /^\/voices$/ },
+  { method: 'POST',  path: /^\/images\/generate$/ },
+];
+
+let maskySkillCache: string | null = null;
+
+const MASKY_DOCS_TOOL: Anthropic.Tool = {
+  name: 'masky_docs',
+  description:
+    'Fetch the masky.ai API reference. Call this before using masky_api if you are '
+    + 'unsure of an endpoint or its request body.',
+  input_schema: { type: 'object', properties: {} },
+};
+
+const MASKY_API_TOOL: Anthropic.Tool = {
+  name: 'masky_api',
+  description:
+    "Call the masky.ai API on the account of whoever is talking to you — create an "
+    + 'avatar, list their avatars, rename one, list voices, generate an image. Read '
+    + 'masky_docs first if you do not know the request shape. Say what you did in '
+    + 'plain language afterwards.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      method: { type: 'string', description: 'GET, POST or PATCH.' },
+      path:   { type: 'string', description: 'Path under https://masky.ai/api, e.g. /avatars.' },
+      body:   { type: 'object', description: 'JSON body for POST and PATCH.' },
+    },
+    required: ['method', 'path'],
+  },
+};
+
+async function maskyDocs(): Promise<{ content: Anthropic.TextBlockParam[]; isError: boolean }> {
+  if (maskySkillCache) {
+    return { content: [{ type: 'text', text: maskySkillCache }], isError: false };
+  }
+  try {
+    const res = await fetch(MASKY_SKILL_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    maskySkillCache = (await res.text()).slice(0, 40_000);
+    return { content: [{ type: 'text', text: maskySkillCache }], isError: false };
+  } catch (err) {
+    console.error('[claudeAgent] masky skill fetch failed', err);
+    return { content: [{ type: 'text', text: 'Could not fetch the masky API reference.' }], isError: true };
+  }
+}
+
+async function maskyApi(
+  requesterUid: string | undefined,
+  input: { method?: string; path?: string; body?: unknown },
+): Promise<{ content: Anthropic.TextBlockParam[]; isError: boolean }> {
+  const method = (input.method ?? 'GET').toUpperCase();
+  const path   = input.path ?? '';
+
+  if (!requesterUid) {
+    return { content: [{ type: 'text', text: 'No account to act on here.' }], isError: true };
+  }
+  if (!MASKY_ALLOWED.some((a) => a.method === method && a.path.test(path))) {
+    return {
+      content: [{
+        type: 'text',
+        text: `${method} ${path} is not something you are allowed to do on someone's account. `
+          + 'You can list and create avatars, rename an avatar, list its images, list voices, '
+          + 'and generate images. Tell them that rather than trying another route.',
+      }],
+      isError: true,
+    };
+  }
+
+  const key = await ensureUserMaskyKey(requesterUid);
+  if (!key) {
+    return { content: [{ type: 'text', text: 'That user has no masky account key.' }], isError: true };
+  }
+
+  try {
+    const res = await fetch(`${MASKY_API_BASE}${path}`, {
+      method,
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      ...(method === 'GET' ? {} : { body: JSON.stringify(input.body ?? {}) }),
+    });
+    const text = (await res.text()).slice(0, 8_000);
+    return {
+      content: [{ type: 'text', text: `HTTP ${res.status}\n${text}` }],
+      isError: !res.ok,
+    };
+  } catch (err) {
+    console.error('[claudeAgent] masky api call failed', err);
+    return { content: [{ type: 'text', text: 'The masky API call failed.' }], isError: true };
+  }
+}
+
 const READ_ATTACHMENT_TOOL: Anthropic.Tool = {
   name: 'read_attachment',
   description:
@@ -651,6 +763,8 @@ async function runTurn(opts: {
   guildId?: string;
   /** Who is in voice, so capture_stream can find the sharer's channel. */
   presence?: VoicePresence[];
+  /** Whose masky account masky_api acts on — the person who is talking. */
+  requesterUid?: string;
 }): Promise<{ skipped: boolean; finalText: string }> {
   const client = new Anthropic({ apiKey: opts.apiKey });
   const attachments = opts.attachments ?? new Map<string, AttachmentRef>();
@@ -660,6 +774,7 @@ async function runTurn(opts: {
   const tools: Anthropic.Tool[] = [];
   if (attachments.size > 0) tools.push(READ_ATTACHMENT_TOOL);
   if (canCapture) tools.push(CAPTURE_STREAM_TOOL);
+  if (opts.requesterUid) tools.push(MASKY_DOCS_TOOL, MASKY_API_TOOL);
 
   // Conversation grows as tool rounds are appended, so it is not the caller's
   // array.
@@ -704,10 +819,27 @@ async function runTurn(opts: {
     // Feed each requested file back in, then let the model continue.
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const use of toolUses) {
-      const input = (use.input ?? {}) as { id?: string; userId?: string };
-      const { content, isError } = use.name === CAPTURE_STREAM_TOOL.name
-        ? await captureStream(opts.guildId ?? '', presence, input.userId ?? '')
-        : await readAttachment(attachments.get(input.id ?? ''));
+      const input = (use.input ?? {}) as {
+        id?: string; userId?: string; method?: string; path?: string; body?: unknown;
+      };
+      let outcome: {
+        content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>;
+        isError: boolean;
+      };
+      switch (use.name) {
+        case CAPTURE_STREAM_TOOL.name:
+          outcome = await captureStream(opts.guildId ?? '', presence, input.userId ?? '');
+          break;
+        case MASKY_DOCS_TOOL.name:
+          outcome = await maskyDocs();
+          break;
+        case MASKY_API_TOOL.name:
+          outcome = await maskyApi(opts.requesterUid, input);
+          break;
+        default:
+          outcome = await readAttachment(attachments.get(input.id ?? ''));
+      }
+      const { content, isError } = outcome;
       results.push({ type: 'tool_result', tool_use_id: use.id, content, is_error: isError });
     }
     convo.push({ role: 'assistant', content: final.content });
@@ -809,6 +941,7 @@ export const onClaudeChannelMessage = onDocumentCreated(
         attachments,
         guildId,
         presence,
+        requesterUid: msg.authorId as string,
       });
       if (skipped) {
         await destRef.delete().catch(() => {});
@@ -1201,6 +1334,7 @@ export const onClaudeTranscriptUtterance = onDocumentCreated(
           attachments: vAttach,
           guildId,
           presence,
+          requesterUid: utt.userId as string,
         });
         if (!skipped && finalText) {
           // masky already voiced the draft it wrote, so those clips no longer
