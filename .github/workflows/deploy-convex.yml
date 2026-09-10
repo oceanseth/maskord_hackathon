@@ -9,6 +9,10 @@ on:
     branches: [main]
     paths:
       - 'www/**'
+      # The Maskord client is built into the published bundle (www/dist/app),
+      # so client-only changes have to deploy too. Leaving these out meant
+      # commits touching only app/ shipped nothing.
+      - 'app/**'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/deploy-convex.yml'
