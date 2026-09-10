@@ -36,7 +36,6 @@ export function useCaptureResponder(opts: {
     if (!guildId || !channelId || !userId) return;
 
     const rtdb = getFirebaseRtdb();
-    const node = ref(rtdb, `voiceState/${guildId}/${channelId}/${userId}`);
     const requestRef = ref(rtdb, `voiceState/${guildId}/${channelId}/${userId}/captureRequest`);
     const resultRef  = ref(rtdb, `voiceState/${guildId}/${channelId}/${userId}/captureResult`);
 
@@ -72,7 +71,9 @@ export function useCaptureResponder(opts: {
     return () => {
       unsub();
       // Leave no stale answer behind for the next session in this channel.
-      remove(ref(rtdb, `${node.toString()}/captureResult`)).catch(() => {});
+      // (resultRef, not a path built from node.toString() — that returns the
+      // full https:// URL, which ref() rejects as a path.)
+      remove(resultRef).catch(() => {});
     };
   }, [guildId, channelId, userId]);
 }
