@@ -251,12 +251,155 @@ interface TurnSource {
   authorId: string;
   authorName?: string;
   content: string;
+  attachments?: AttachmentRef[];
 }
 
-function buildSystemPrompt(avatar: AvatarMeta, mode: ChannelClaudeCfg['mode'], guildName: string): string {
+/** A file shared into the channel. Bytes live in Convex; this is the pointer. */
+interface AttachmentRef {
+  url:         string;
+  filename:    string;
+  size:        number;
+  contentType: string;
+}
+
+// ─── Attachments ──────────────────────────────────────────────────────────────
+//
+// Files are NOT pushed into the model on arrival — that would re-send every
+// image in the history window on every turn. Instead the prompt lists what is
+// available and the model pulls a file with the read_attachment tool only when
+// someone actually asks it to do something with one.
+
+/** Refuse to inline anything larger than this; base64 costs ~4/3 of the bytes. */
+const MAX_ATTACHMENT_FETCH_BYTES = 5 * 1024 * 1024;
+/** Cap on how much of a text file is inlined. */
+const MAX_TEXT_ATTACHMENT_CHARS = 20_000;
+/** Guard against a model looping on tool calls. */
+const MAX_TOOL_ROUNDS = 3;
+
+/** The only image types this SDK version can carry in a content block. */
+const VISION_MEDIA_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'] as const;
+type VisionMediaType = (typeof VISION_MEDIA_TYPES)[number];
+
+function isVisionMediaType(t: string): t is VisionMediaType {
+  return (VISION_MEDIA_TYPES as readonly string[]).includes(t);
+}
+
+function isTextualType(t: string): boolean {
+  return t.startsWith('text/')
+    || t === 'application/json'
+    || t === 'application/xml'
+    || t === 'application/csv';
+}
+
+const READ_ATTACHMENT_TOOL: Anthropic.Tool = {
+  name: 'read_attachment',
+  description:
+    'Read a file that was shared in this channel. Use it only when the conversation '
+    + 'actually requires the contents — describing, summarising, analysing or answering '
+    + 'a question about the file. Images come back as pictures you can see; text files '
+    + 'come back as text. Do not call it just because a file was mentioned.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      id: { type: 'string', description: 'The attachment id from the file list, e.g. att_1.' },
+    },
+    required: ['id'],
+  },
+};
+
+/** Human-readable size, for the manifest. */
+function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** Index every attachment in the history window as att_1, att_2, … */
+function indexAttachments(history: TurnSource[]): Map<string, AttachmentRef> {
+  const map = new Map<string, AttachmentRef>();
+  let n = 0;
+  for (const h of history) {
+    for (const a of h.attachments ?? []) {
+      n += 1;
+      map.set(`att_${n}`, a);
+    }
+  }
+  return map;
+}
+
+/** Fetch one attachment and turn it into tool_result content. */
+async function readAttachment(
+  ref: AttachmentRef | undefined,
+): Promise<{ content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>; isError: boolean }> {
+  if (!ref) {
+    return { content: [{ type: 'text', text: 'No attachment with that id.' }], isError: true };
+  }
+  if (ref.size > MAX_ATTACHMENT_FETCH_BYTES) {
+    return {
+      content: [{ type: 'text', text: `${ref.filename} is ${humanSize(ref.size)}, too large to read.` }],
+      isError: true,
+    };
+  }
+
+  let buf: Buffer;
+  try {
+    const res = await fetch(ref.url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    buf = Buffer.from(await res.arrayBuffer());
+  } catch (err) {
+    console.error('[claudeAgent] attachment fetch failed', ref.filename, err);
+    return {
+      content: [{ type: 'text', text: `Could not download ${ref.filename}.` }],
+      isError: true,
+    };
+  }
+
+  if (isVisionMediaType(ref.contentType)) {
+    return {
+      content: [{
+        type: 'image',
+        source: { type: 'base64', media_type: ref.contentType, data: buf.toString('base64') },
+      }],
+      isError: false,
+    };
+  }
+
+  if (isTextualType(ref.contentType)) {
+    const text = buf.toString('utf8').slice(0, MAX_TEXT_ATTACHMENT_CHARS);
+    return {
+      content: [{ type: 'text', text: `Contents of ${ref.filename}:\n\n${text}` }],
+      isError: false,
+    };
+  }
+
+  return {
+    content: [{
+      type: 'text',
+      text: `${ref.filename} is ${ref.contentType}, which cannot be read directly. `
+        + 'Say so rather than guessing at its contents.',
+    }],
+    isError: true,
+  };
+}
+
+function buildSystemPrompt(
+  avatar: AvatarMeta,
+  mode: ChannelClaudeCfg['mode'],
+  guildName: string,
+  attachments: Map<string, AttachmentRef> = new Map(),
+): string {
   const tone = avatar.personalityPrompt?.trim()
     ? `\n\nPersonality:\n${avatar.personalityPrompt.trim()}`
     : '';
+
+  const files = attachments.size === 0 ? '' : `
+
+Files shared in this channel:
+${[...attachments.entries()]
+  .map(([id, a]) => `- ${id}: ${a.filename} (${a.contentType}, ${humanSize(a.size)})`)
+  .join('\n')}
+
+You cannot see their contents until you ask for them. Call read_attachment with the id when the conversation needs what is inside a file — someone asks you to describe, summarise, check or use it. Do not call it merely because a file was posted; acknowledging an upload by name is fine on its own. Never describe a file you have not read.`;
   const triggerNote = mode === 'mention'
     ? `Only respond if the latest message is directed at you (e.g. @${avatar.displayName}, addresses you by name, or clearly asks for your help). If it isn't, reply with exactly the single token NO_REPLY and nothing else.`
     : `Respond to the latest message in the channel. Stay terse unless a longer answer is required.`;
@@ -264,7 +407,7 @@ function buildSystemPrompt(avatar: AvatarMeta, mode: ChannelClaudeCfg['mode'], g
 
 Multiple humans share this channel. Address them by name when replying. Keep responses short and conversational unless the user asks for depth. Format using GitHub-flavored markdown.
 
-${triggerNote}${tone}`;
+${triggerNote}${files}${tone}`;
 }
 
 function buildMessagesArray(history: TurnSource[]): Array<{ role: 'user' | 'assistant'; content: string }> {
@@ -272,12 +415,23 @@ function buildMessagesArray(history: TurnSource[]): Array<{ role: 'user' | 'assi
   // alternating user/assistant roles; we collapse human turns into one "user"
   // block per contiguous run.
   const out: Array<{ role: 'user' | 'assistant'; content: string }> = [];
+  // Attachment ids must line up with indexAttachments(), which walks the same
+  // history in the same order.
+  let attachmentNo = 0;
   for (const h of history) {
     const isBot = h.authorId.startsWith('bot:');
     const role  = isBot ? 'assistant' : 'user';
+    // Name any files on this turn so the model knows which id to ask for. The
+    // bytes are not sent — read_attachment fetches them on demand.
+    const files = (h.attachments ?? [])
+      .map((a) => {
+        attachmentNo += 1;
+        return ` [attachment att_${attachmentNo}: ${a.filename}, ${a.contentType}, ${humanSize(a.size)}]`;
+      })
+      .join('');
     const text  = isBot
-      ? h.content
-      : `${h.authorName ?? 'unknown'}: ${h.content}`;
+      ? `${h.content}${files}`
+      : `${h.authorName ?? 'unknown'}: ${h.content}${files}`;
     const last = out[out.length - 1];
     if (last && last.role === role) {
       last.content += `\n${text}`;
@@ -304,34 +458,65 @@ async function runTurn(opts: {
   messages:    Array<{ role: 'user' | 'assistant'; content: string }>;
   destRef:     admin.firestore.DocumentReference;
   destField:   'content' | 'text';
+  /** Files the model may pull with read_attachment. Omit to disable the tool. */
+  attachments?: Map<string, AttachmentRef>;
 }): Promise<{ skipped: boolean; finalText: string }> {
   const client = new Anthropic({ apiKey: opts.apiKey });
+  const attachments = opts.attachments ?? new Map<string, AttachmentRef>();
+
+  // Conversation grows as tool rounds are appended, so it is not the caller's
+  // array.
+  const convo: Anthropic.MessageParam[] = [...opts.messages];
 
   let acc = '';
   let lastFlush = 0;
 
-  const stream = await client.messages.stream({
-    model:      MODEL,
-    max_tokens: MAX_TOKENS,
-    system:     opts.systemPrompt,
-    messages:   opts.messages,
-  });
+  for (let round = 0; ; round += 1) {
+    const stream = await client.messages.stream({
+      model:      MODEL,
+      max_tokens: MAX_TOKENS,
+      system:     opts.systemPrompt,
+      messages:   convo,
+      ...(attachments.size > 0 && round < MAX_TOOL_ROUNDS
+        ? { tools: [READ_ATTACHMENT_TOOL] }
+        : {}),
+    });
 
-  for await (const evt of stream) {
-    if (evt.type === 'content_block_delta' && evt.delta.type === 'text_delta') {
-      acc += evt.delta.text;
-      // NO_REPLY short-circuit — let the avatar stay silent
-      if (acc.trim() === 'NO_REPLY' || acc.startsWith('NO_REPLY')) {
-        try { stream.controller.abort(); } catch { /* noop */ }
-        return { skipped: true, finalText: '' };
-      }
-      const now = Date.now();
-      if (now - lastFlush > STREAM_FLUSH_MS) {
-        lastFlush = now;
-        await opts.destRef.update({ [opts.destField]: acc }).catch(() => {});
+    for await (const evt of stream) {
+      if (evt.type === 'content_block_delta' && evt.delta.type === 'text_delta') {
+        acc += evt.delta.text;
+        // NO_REPLY short-circuit — let the avatar stay silent
+        if (acc.trim() === 'NO_REPLY' || acc.startsWith('NO_REPLY')) {
+          try { stream.controller.abort(); } catch { /* noop */ }
+          return { skipped: true, finalText: '' };
+        }
+        const now = Date.now();
+        if (now - lastFlush > STREAM_FLUSH_MS) {
+          lastFlush = now;
+          await opts.destRef.update({ [opts.destField]: acc }).catch(() => {});
+        }
       }
     }
+
+    const final = await stream.finalMessage();
+    const toolUses = final.content.filter(
+      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+    );
+
+    // No tool call: this round produced the answer.
+    if (toolUses.length === 0 || round >= MAX_TOOL_ROUNDS) break;
+
+    // Feed each requested file back in, then let the model continue.
+    const results: Anthropic.ToolResultBlockParam[] = [];
+    for (const use of toolUses) {
+      const id = (use.input as { id?: string } | null)?.id ?? '';
+      const { content, isError } = await readAttachment(attachments.get(id));
+      results.push({ type: 'tool_result', tool_use_id: use.id, content, is_error: isError });
+    }
+    convo.push({ role: 'assistant', content: final.content });
+    convo.push({ role: 'user', content: results });
   }
+
   await opts.destRef.update({
     [opts.destField]: acc.trim(),
     streaming: false,
@@ -389,11 +574,13 @@ export const onClaudeChannelMessage = onDocumentCreated(
         authorId,
         authorName: authorId.startsWith('bot:') ? avatar.displayName : nameByUid[authorId],
         content:    (data.content as string) ?? '',
+        attachments: (data.attachments as AttachmentRef[] | undefined) ?? undefined,
       };
     });
 
     const guildName  = (await db.doc(`guilds/${guildId}`).get()).data()?.name ?? 'this server';
-    const systemPrompt = buildSystemPrompt(avatar, channel.mode, guildName);
+    const attachments  = indexAttachments(history);
+    const systemPrompt = buildSystemPrompt(avatar, channel.mode, guildName, attachments);
     const messages     = buildMessagesArray(history);
     if (messages.length === 0) return;
 
@@ -419,6 +606,7 @@ export const onClaudeChannelMessage = onDocumentCreated(
         messages,
         destRef,
         destField:    'content',
+        attachments,
       });
       if (skipped) {
         await destRef.delete().catch(() => {});
