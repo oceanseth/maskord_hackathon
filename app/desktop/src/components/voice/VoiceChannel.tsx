@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { useAuth, useUserProfiles, createInvite, useGuild, useGuildChannels, DEFAULT_CLAUDE_AVATAR } from '@maskord/shared';
+import { useAuth, useUserProfiles, createInvite, useGuild, useGuildChannels, DEFAULT_CLAUDE_AVATAR, appendTranscriptUtterance } from '@maskord/shared';
 import type { ShareKind } from '@maskord/shared';
 import { useTalkingHead } from '../../hooks/useTalkingHead';
 import { useVoiceCtx } from './VoiceProvider';
+import type { TranscriptSink } from './VoiceProvider';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
 import Modal from '../ui/Modal';
 import {
@@ -30,7 +31,7 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
     participants, localStream, isMuted, isDeafened, isConnected, localSpeaking,
     micError, voiceSettings, updateVoiceSettings, audioInputs, audioOutputs,
     refreshDevices, toggleMute, toggleDeafen, hangUp, updateInputDevice, updateMaskIdentity,
-    sharing, startSharing, stopSharing,
+    sharing, startSharing, stopSharing, sttStatus, registerTranscriptSink,
   } = useVoiceCtx();
 
   /** Whose shared video is expanded, if any. */
@@ -132,12 +133,50 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
 
   // Stream local STT into the channel transcript while the user is connected
   // and AI assistance is on. Other peers see your utterances appear live.
-  // Pause while muted so we're not transcribing dead air or side conversations.
+  // The session itself lives in VoiceProvider (shared with the avatar voice and
+  // paused while muted); this view says where the words go and which names to
+  // listen for.
+  const maskRef = useRef<{ name?: string; avatarUrl?: string }>({});
+  maskRef.current = { name: selectedMask?.displayName, avatarUrl: selectedMask?.thumbnailUrl };
+
+  const memberNames = allIds.map((id) => profiles[id]?.displayName ?? profiles[id]?.twitchUsername ?? '');
+  const keyterms = useMemo(() => [
+    'Maskord',
+    ...displayedAvatars.map((a) => a.displayName),
+    ...(selectedMask ? [selectedMask.displayName] : []),
+    ...memberNames,
+  ].filter(Boolean), [displayedAvatars, selectedMask?.displayName, memberNames.join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const userId = firebaseUser?.uid ?? null;
+  const transcriptSink = useMemo<TranscriptSink | null>(() => {
+    if (!transcriptOn || !userId) return null;
+    return {
+      keyterms,
+      prompt: `Casual voice chat between friends in a Maskord voice channel. An AI avatar called ${primaryName} is in the call and people address it by name.`,
+      onFinalTurn: ({ text }) => {
+        appendTranscriptUtterance(guildId, channelId, {
+          userId,
+          text,
+          source: 'stt',
+          maskName:      maskRef.current.name,
+          maskAvatarUrl: maskRef.current.avatarUrl,
+        }).catch((err) => console.error('[stt] write failed:', err));
+      },
+    };
+  }, [transcriptOn, userId, guildId, channelId, keyterms, primaryName]);
+
+  useEffect(() => {
+    registerTranscriptSink(transcriptSink);
+    return () => registerTranscriptSink(null);
+  }, [transcriptSink, registerTranscriptSink]);
+
+  // Web Speech API fallback for browsers when AssemblyAI is not configured.
+  // (Dead in Electron — no Google speech key — which is why AssemblyAI exists.)
   useBrowserSTT({
     guildId,
     channelId,
-    userId:  firebaseUser?.uid ?? null,
-    enabled: transcriptOn && isConnected && !isMuted,
+    userId,
+    enabled: transcriptOn && isConnected && !isMuted && sttStatus === 'fallback',
     maskName:      selectedMask?.displayName,
     maskAvatarUrl: selectedMask?.thumbnailUrl,
   });

@@ -19,6 +19,18 @@ import { useVoiceSettings } from '../../hooks/useVoiceSettings';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
 import { useMaskyVoice } from '../../hooks/useMaskyVoice';
 import { useCaptureResponder } from '../../hooks/useCaptureResponder';
+import { useAssemblyStreamingSTT } from '../../hooks/useAssemblyStreamingSTT';
+import type { SttStatus, TranscriptTurn } from '../../hooks/useAssemblyStreamingSTT';
+
+/** Where finished utterances from the local user's STT session should go.
+ *  Registered by whichever view owns the channel transcript. */
+export interface TranscriptSink {
+  onFinalTurn: (turn: TranscriptTurn) => void;
+  /** Names the recogniser should spell right (members, masks, the AI avatar). */
+  keyterms?: string[];
+  /** One sentence of context about the conversation. */
+  prompt?: string;
+}
 
 export interface VoiceContextValue {
   participants: VoiceParticipant[];
@@ -56,6 +68,12 @@ export interface VoiceContextValue {
   stopSharing: () => Promise<void>;
   /** True while the avatar's synthesized voice is being transmitted */
   isAvatarSpeaking: boolean;
+  /** State of the local user's AssemblyAI STT session. 'fallback' means callers
+   *  that can should run the Web Speech API themselves. */
+  sttStatus: SttStatus;
+  /** Ask for the local user's finished utterances (the channel transcript). The
+   *  STT session runs while a sink is registered or avatar voice mode is on. */
+  registerTranscriptSink: (sink: TranscriptSink | null) => void;
   // DM calling
   isDmCall: boolean;
   dmCallPartnerId: string | null;
@@ -94,6 +112,8 @@ const VoiceCtx = createContext<VoiceContextValue>({
   replaceAudioTrack: async () => {},
   updateMaskIdentity: () => {},
   isAvatarSpeaking: false,
+  sttStatus: 'off',
+  registerTranscriptSink: () => {},
   isDmCall: false,
   dmCallPartnerId: null,
   dmCallStatus: null,
@@ -135,14 +155,42 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     isSharing: sharing !== null,
   });
 
-  useMaskyVoice({
+  // ─── Speech-to-text ──────────────────────────────────────────────────────────
+  //
+  // One AssemblyAI session per user feeds two consumers: the channel transcript
+  // (registered by VoiceChannel) and the masky avatar voice. It runs only while
+  // someone wants it and the mic is live, because the socket bills open time.
+
+  const [transcriptSink, setTranscriptSink] = useState<TranscriptSink | null>(null);
+  const registerTranscriptSink = useCallback((sink: TranscriptSink | null) => setTranscriptSink(sink), []);
+  // Mirrors sttStatus one render late so useMaskyVoice (called first, because the
+  // STT hook needs its avatarMode) knows whether to run its own Web Speech.
+  const [sttFallback, setSttFallback] = useState(false);
+
+  const { avatarMode, speakUtterance } = useMaskyVoice({
     uid:                   userId,
     isConnected,
     isMuted,
     localStream,
     replaceAudioTrack,
     onAvatarSpeakingChange: setIsAvatarSpeaking,
+    sttFallback,
   });
+
+  const { status: sttStatus } = useAssemblyStreamingSTT({
+    localStream,
+    enabled:  isConnected && !isMuted && (transcriptSink !== null || avatarMode),
+    // Silence the feed while the avatar is speaking (its voice would come back
+    // as the user's words) and, in push-to-talk, while the key is up.
+    gateOpen: !isAvatarSpeaking && (settings.mode !== 'ptt' || localSpeaking),
+    keyterms: transcriptSink?.keyterms,
+    prompt:   transcriptSink?.prompt,
+    onFinalTurn: (turn) => {
+      transcriptSink?.onFinalTurn(turn);
+      if (avatarMode) speakUtterance(turn.text);
+    },
+  });
+  useEffect(() => { setSttFallback(sttStatus === 'fallback'); }, [sttStatus]);
 
   const isDmCall = voiceGuildId === '__dm__';
 
@@ -437,6 +485,8 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       startSharing,
       stopSharing,
       isAvatarSpeaking,
+      sttStatus,
+      registerTranscriptSink,
       isDmCall,
       dmCallPartnerId,
       dmCallStatus,

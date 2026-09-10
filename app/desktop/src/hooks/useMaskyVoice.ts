@@ -51,8 +51,10 @@ interface SpeechRecogEvent {
  *
  * When the user has an avatar selected (with a Hume voice ID) and is connected
  * to a voice channel, this hook:
- *   1. Listens for the user's speech via the Web Speech API
- *   2. On a final transcript, POSTs it to masky.ai/api/maskord/speak
+ *   1. Takes each finished utterance from the shared AssemblyAI STT session
+ *      (VoiceProvider calls `speakUtterance`), or from its own Web Speech
+ *      recogniser when `sttFallback` says AssemblyAI is unavailable
+ *   2. POSTs it to masky.ai/api/maskord/speak
  *   3. Decodes the returned MP3 and routes it through an AudioContext
  *   4. Calls replaceAudioTrack() to inject the avatar's voice into WebRTC
  *   5. Restores the original mic track after playback
@@ -64,6 +66,7 @@ export function useMaskyVoice({
   localStream,
   replaceAudioTrack,
   onAvatarSpeakingChange,
+  sttFallback,
 }: {
   uid: string | null;
   isConnected: boolean;
@@ -71,6 +74,9 @@ export function useMaskyVoice({
   localStream: MediaStream | null;
   replaceAudioTrack: (track: MediaStreamTrack | null) => Promise<void>;
   onAvatarSpeakingChange: (speaking: boolean) => void;
+  /** True when the AssemblyAI session is unavailable and this hook must run
+   *  the Web Speech API itself. Otherwise utterances arrive via speakUtterance. */
+  sttFallback: boolean;
 }) {
   const [selectedGroup, setSelectedGroup] = useState<MaskyAvatarGroup | null>(null);
 
@@ -87,6 +93,8 @@ export function useMaskyVoice({
 
   const isMutedRef = useRef(isMuted);
   useEffect(() => { isMutedRef.current = isMuted; }, [isMuted]);
+  const sttFallbackRef = useRef(sttFallback);
+  useEffect(() => { sttFallbackRef.current = sttFallback; }, [sttFallback]);
 
   // Reactive voicing mode from the persisted toggles (updated live when the
   // Avatar Settings modal dispatches `maskord-voice-settings-changed`).
@@ -110,10 +118,13 @@ export function useMaskyVoice({
   // Avatar mode is active when a voiced mask is selected, a mode is on, we're
   // connected, and not manually muted.
   const avatarMode = voiceMode !== 'off' && !!selectedGroup?.humeVoiceId && isConnected && !isMuted;
+  const avatarModeRef = useRef(avatarMode);
+  useEffect(() => { avatarModeRef.current = avatarMode; }, [avatarMode]);
 
   // While in avatar mode, keep the REAL mic silent for transmission so peers hear
-  // ONLY the rendered avatar audio — never the user's own voice. (STT is driven
-  // by the Web Speech API, which reads the mic independently of this flag.)
+  // ONLY the rendered avatar audio — never the user's own voice. (STT reads a
+  // clone of the mic track, or its own capture under Web Speech, so this flag
+  // does not silence it.)
   useEffect(() => {
     const track = originalTrackRef.current;
     if (!track) return;
@@ -163,9 +174,24 @@ export function useMaskyVoice({
     return unsub;
   }, [uid]);
 
-  // ── Start / stop speech recognition ───────────────────────────────────────
+  // ── Utterances from the shared AssemblyAI session ─────────────────────────
+
+  /** Voice one finished utterance as the avatar. Dropped while a previous line
+   *  is still rendering or when avatar mode is off. */
+  const speakUtterance = useCallback((text: string) => {
+    const transcript = text.trim();
+    if (!transcript || processingRef.current || !avatarModeRef.current) return;
+    const group = selectedGroupRef.current;
+    if (!group?.humeVoiceId || !uid) return;
+    void speakAsAvatar(transcript, group, uid);
+  }, [uid]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Web Speech fallback recogniser ────────────────────────────────────────
+  // Only used when AssemblyAI is not configured. Note it is dead in Electron
+  // (no Google speech key) — see useAssemblyStreamingSTT.
 
   const startRecognition = useCallback(() => {
+    if (!sttFallbackRef.current) return;
     const SpeechRecognitionImpl = getSpeechRecognitionCtor();
     if (!SpeechRecognitionImpl) return;
     if (recognitionRef.current) return; // already running
@@ -209,13 +235,13 @@ export function useMaskyVoice({
     try { rec?.stop(); } catch { /* ignore */ }
   }, []);
 
-  // Run STT only when avatar mode is active (a voiced mask + a mode on + not
-  // muted). When it's off we don't transcribe or replace anything.
+  // Run the fallback recogniser only when avatar mode is active (a voiced mask
+  // + a mode on + not muted) and AssemblyAI is unavailable.
   useEffect(() => {
-    if (avatarMode) startRecognition();
-    else            stopRecognition();
+    if (avatarMode && sttFallback) startRecognition();
+    else                           stopRecognition();
     return stopRecognition;
-  }, [avatarMode, startRecognition, stopRecognition]);
+  }, [avatarMode, sttFallback, startRecognition, stopRecognition]);
 
   // ── Reinterpret-with-personality path (masky conversation turn) ──────────────
 
@@ -307,7 +333,8 @@ export function useMaskyVoice({
       const token = await auth.currentUser?.getIdToken();
       if (!token) return;
 
-      // Stop STT while we play back to avoid feedback
+      // Stop the fallback recogniser while we play back to avoid feedback. (The
+      // AssemblyAI session is gated by VoiceProvider on isAvatarSpeaking instead.)
       stopRecognition();
 
       // Mute mic so it doesn't bleed through
@@ -372,7 +399,7 @@ export function useMaskyVoice({
       processingRef.current = false;
       onAvatarSpeakingChange(false);
 
-      // Restart STT (only meaningful while avatar mode is on).
+      // Restart the fallback recogniser (no-op unless it is in use).
       startRecognition();
     }
   }
@@ -380,5 +407,8 @@ export function useMaskyVoice({
   return {
     selectedGroup,
     isAvatarActive: !!selectedGroup?.humeVoiceId,
+    /** True while the user's speech should be voiced by the avatar. */
+    avatarMode,
+    speakUtterance,
   };
 }

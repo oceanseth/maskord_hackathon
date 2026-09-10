@@ -28,6 +28,28 @@ wear whatever mask you like when interacting with others.
 | `firebase/` | Firestore/RTDB rules and Cloud Functions. Note that the authoritative rules live in the `masky_auth` repo. |
 | `terraform/` | Upstream maskord.com infrastructure. Do not apply from this repo. |
 
+## Voice transcript (speech-to-text)
+
+Voice channels with AI assistance transcribe each speaker's microphone in
+their own client with [AssemblyAI Universal-Streaming](https://www.assemblyai.com/docs/streaming),
+and write finished utterances to the channel transcript in Firestore. The
+browser never sees the account key: the `getSttToken` Cloud Function mints a
+single-use temporary token per session.
+
+Set the key once per Firebase project, then deploy that one function:
+
+```bash
+cd firebase
+firebase functions:secrets:set ASSEMBLYAI_API_KEY
+firebase deploy --only functions:getSttToken
+```
+
+Until the secret is set the clients fall back to the browser's Web Speech
+API, which works in Chrome and Safari but not in the Electron build.
+Streaming is billed per hour the socket is open, so the client only holds a
+session while the user is connected, unmuted, and either the transcript or
+avatar voice mode wants it.
+
 ## Deploying
 
 Push to `main`. Anything touching `www/` publishes to the prod Convex
