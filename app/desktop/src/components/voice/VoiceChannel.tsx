@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useAuth, useUserProfiles, createInvite, useGuild, useGuildChannels, DEFAULT_CLAUDE_AVATAR } from '@maskord/shared';
+import type { ShareKind } from '@maskord/shared';
 import { useTalkingHead } from '../../hooks/useTalkingHead';
 import { useVoiceCtx } from './VoiceProvider';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
@@ -29,7 +30,11 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
     participants, localStream, isMuted, isDeafened, isConnected, localSpeaking,
     micError, voiceSettings, updateVoiceSettings, audioInputs, audioOutputs,
     refreshDevices, toggleMute, toggleDeafen, hangUp, updateInputDevice, updateMaskIdentity,
+    sharing, startSharing, stopSharing,
   } = useVoiceCtx();
+
+  /** Whose shared video is expanded, if any. */
+  const [maximizedId, setMaximizedId] = useState<string | null>(null);
 
   const [settingsOpen, setSettingsOpen]           = useState(false);
   const [avatarSettingsOpen, setAvatarSettingsOpen] = useState(false);
@@ -218,6 +223,8 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
                 speaking={localSpeaking && !isMuted}
                 isSelf
                 onGearClick={() => setAvatarSettingsOpen(true)}
+                sharing={sharing}
+                onMaximize={() => setMaximizedId(firebaseUser.uid)}
               />
             );
           })()}
@@ -238,6 +245,8 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
                   avatarUrl={avatarUrl}
                   stream={p.stream}
                   isMuted={p.state.muted}
+                  sharing={p.state.sharing ?? null}
+                  onMaximize={() => setMaximizedId(p.userId)}
                 />
               );
             })}
@@ -278,6 +287,33 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
         />
       )}
 
+      {/* Expanded share. On desktop it fills the area above the chat; on mobile
+          it covers the screen, since there is no room to do anything else. */}
+      {maximizedId && (() => {
+        const isSelfMax = maximizedId === firebaseUser?.uid;
+        const maxParticipant = participants.find((p) => p.userId === maximizedId);
+        const maxStream = isSelfMax ? localStream : maxParticipant?.stream ?? null;
+        const maxSharing = isSelfMax ? sharing : maxParticipant?.state.sharing ?? null;
+        const maxName = isSelfMax
+          ? (selectedMask?.displayName ?? selfInfo?.name ?? 'You')
+          : (maxParticipant?.state.maskName ?? getMemberInfo(maximizedId).name);
+
+        // The sharer stopped while expanded — drop back to the grid.
+        if (!maxStream || !maxSharing) {
+          setMaximizedId(null);
+          return null;
+        }
+
+        return (
+          <MaximizedShare
+            stream={maxStream}
+            kind={maxSharing}
+            name={maxName}
+            onMinimize={() => setMaximizedId(null)}
+          />
+        );
+      })()}
+
       {/* Voice controls bar */}
       <div className="flex-shrink-0 border-t border-[#1e1e2e] bg-[#0a0a12] px-4 py-3 flex items-center justify-center gap-4">
         <VoiceButton
@@ -298,6 +334,34 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
           title={isDeafened ? 'Undeafen' : 'Deafen'}
         >
           {isDeafened ? <DeafenedIcon /> : <HeadsetIcon />}
+        </VoiceButton>
+
+        {/* Share screen — toggles off when already sharing one */}
+        <VoiceButton
+          active={sharing === 'screen'}
+          activeColor="bg-violet-600 hover:bg-violet-500"
+          inactiveColor="bg-[#1e1e2e] hover:bg-[#2a2a3e]"
+          onClick={() => {
+            if (sharing === 'screen') void stopSharing();
+            else void startSharing('screen');
+          }}
+          title={sharing === 'screen' ? 'Stop sharing screen' : 'Share screen'}
+        >
+          <ScreenShareIcon />
+        </VoiceButton>
+
+        {/* Share camera */}
+        <VoiceButton
+          active={sharing === 'camera'}
+          activeColor="bg-violet-600 hover:bg-violet-500"
+          inactiveColor="bg-[#1e1e2e] hover:bg-[#2a2a3e]"
+          onClick={() => {
+            if (sharing === 'camera') void stopSharing();
+            else void startSharing('camera');
+          }}
+          title={sharing === 'camera' ? 'Stop camera' : 'Share camera'}
+        >
+          <CameraIcon />
         </VoiceButton>
 
         {/* Settings */}
@@ -522,6 +586,81 @@ function DeviceSelect({ devices, value, onChange, placeholder }: {
   );
 }
 
+// ─── Maximized share ──────────────────────────────────────────────────────────
+
+/**
+ * An expanded screen or camera feed. Absolutely positioned inside the voice
+ * channel column, so on desktop it covers the participant grid and leaves the
+ * chat panel and controls reachable; on mobile it goes fixed and takes the
+ * whole screen, where there is no room for anything else.
+ */
+function MaximizedShare({ stream, kind, name, onMinimize }: {
+  stream: MediaStream;
+  kind: ShareKind;
+  name: string;
+  onMinimize: () => void;
+}) {
+  const ref = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.srcObject = stream;
+    el.play().catch(() => {});
+    return () => { el.srcObject = null; };
+  }, [stream]);
+
+  // Escape minimizes, which is what anything fullscreen-shaped should do.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onMinimize(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onMinimize]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black md:absolute md:inset-x-0 md:top-0 md:bottom-auto md:h-full">
+      <video
+        ref={ref}
+        autoPlay
+        playsInline
+        muted
+        className={`w-full h-full ${kind === 'screen' ? 'object-contain' : 'object-cover'}`}
+      />
+
+      <div className="absolute top-0 left-0 right-0 flex items-center justify-between px-4 py-3 bg-gradient-to-b from-black/70 to-transparent">
+        <span className="text-sm font-medium text-white truncate">
+          {name} — {kind === 'screen' ? 'screen' : 'camera'}
+        </span>
+        <button
+          onClick={onMinimize}
+          title="Minimize"
+          className="w-8 h-8 rounded-lg bg-black/60 hover:bg-black/80 flex items-center justify-center text-white transition-colors flex-shrink-0"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+            <path d="M6 10h4V4H8v4H6v2zm10 0h-4V4h2v4h2v2zM6 14h4v6H8v-4H6v-2zm10 0h-4v6h2v-4h2v-2z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ScreenShareIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+      <path d="M20 3H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h6v2H8v2h8v-2h-2v-2h6a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zm0 12H4V5h16v10zm-8-9l-4 4h2.5v3h3v-3H16l-4-4z" />
+    </svg>
+  );
+}
+
+function CameraIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5">
+      <path d="M17 10.5V7a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3.5l4 4v-11l-4 4z" />
+    </svg>
+  );
+}
+
 // ─── Participant Tile ─────────────────────────────────────────────────────────
 
 interface TileProps {
@@ -536,10 +675,28 @@ interface TileProps {
   onGearClick?: () => void;
   videoSrc?: string | null;        // talking-head video to play in this tile
   onVideoEnded?: () => void;
+  /** Set when this participant is sharing a screen or camera. */
+  sharing?: ShareKind;
+  /** Expand this tile's shared video. Omitted when there is nothing to expand. */
+  onMaximize?: () => void;
 }
 
-function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingOverride, isSelf, maskName, onGearClick, videoSrc, onVideoEnded }: TileProps) {
+function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingOverride, isSelf, maskName, onGearClick, videoSrc, onVideoEnded, sharing, onMaximize }: TileProps) {
   const initials = name.substring(0, 2).toUpperCase();
+  const liveVideoRef = useRef<HTMLVideoElement>(null);
+
+  // A shared screen/camera arrives on the same MediaStream as the audio. It is
+  // only rendered when the sender says they are sharing — the placeholder track
+  // that holds the video m-line open is otherwise indistinguishable from a feed.
+  const showLiveVideo = Boolean(sharing) && Boolean(stream);
+
+  useEffect(() => {
+    const el = liveVideoRef.current;
+    if (!el || !showLiveVideo || !stream) return;
+    el.srcObject = stream;
+    el.play().catch(() => {});
+    return () => { el.srcObject = null; };
+  }, [showLiveVideo, stream]);
 
   // For remote participants: detect speaking locally via AudioContext
   const remoteSpeaking = useSpeakingDetector(isSelf ? null : stream);
@@ -556,9 +713,17 @@ function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingO
       ${speaking ? 'ring-2 ring-green-500 ring-offset-2 ring-offset-[#0e0e16]' : ''}
     `}>
 
-      {/* Talking-head video (when present) plays over the still; remounts per
-          chunk via `key` so each chunk autoplays. Carries its own audio. */}
-      {videoSrc ? (
+      {/* A live screen/camera share takes the whole tile, replacing the avatar.
+          Muted: the audio for this peer already plays through PersistentAudio. */}
+      {showLiveVideo ? (
+        <video
+          ref={liveVideoRef}
+          autoPlay
+          playsInline
+          muted
+          className={`absolute inset-0 w-full h-full bg-black ${sharing === 'screen' ? 'object-contain' : 'object-cover'}`}
+        />
+      ) : videoSrc ? (
         <video
           key={videoSrc}
           src={videoSrc}
@@ -585,6 +750,19 @@ function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingO
           <p className="text-[11px] text-violet-300 truncate leading-tight">{maskName}</p>
         )}
       </div>
+
+      {/* Maximize — only when there is a live share to expand */}
+      {showLiveVideo && onMaximize && (
+        <button
+          onClick={onMaximize}
+          title="Maximize"
+          className="absolute top-2 left-2 w-7 h-7 rounded-lg bg-black/60 hover:bg-black/80 flex items-center justify-center text-white transition-colors"
+        >
+          <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+            <path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z" />
+          </svg>
+        </button>
+      )}
 
       {/* Muted indicator */}
       {isMuted && (

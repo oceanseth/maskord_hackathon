@@ -18,7 +18,7 @@ export { useMessages, sendMessage, editMessage, deleteMessage, toggleReaction } 
 export { usePresence, updateActiveContext } from './hooks/usePresence';
 export { useUserProfiles } from './hooks/useUsers';
 export { useVoiceChannel, useGuildVoiceState } from './hooks/useVoice';
-export type { VoiceParticipant } from './hooks/useVoice';
+export type { ShareKind, VoiceParticipant } from './hooks/useVoice';
 export { useDmMessages, sendDmMessage, dmChannelId } from './hooks/useDmMessages';
 export { useFriendships, friendshipId } from './hooks/useFriendships';
 export { useDmConversations } from './hooks/useDmConversations';

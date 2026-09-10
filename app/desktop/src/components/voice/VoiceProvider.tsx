@@ -13,7 +13,7 @@ import {
   dmChannelId as mkDmChannelId,
   getFirebaseRtdb,
 } from '@maskord/shared';
-import type { VoiceParticipant } from '@maskord/shared';
+import type { VoiceParticipant, ShareKind } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
 import { useVoiceSettings } from '../../hooks/useVoiceSettings';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
@@ -45,6 +45,12 @@ export interface VoiceContextValue {
   replaceAudioTrack: (track: MediaStreamTrack | null) => Promise<void>;
   /** Publish the user's current mask identity so everyone (sidebar + tiles) shows it. */
   updateMaskIdentity: (mask: { name: string; avatarUrl?: string } | null) => void;
+  /** What the local user is sharing into the call, if anything. */
+  sharing: ShareKind;
+  /** Start sharing a screen or camera. Cancelling the picker is a no-op. */
+  startSharing: (kind: 'screen' | 'camera') => Promise<void>;
+  /** Stop sharing and fall back to the avatar image. */
+  stopSharing: () => Promise<void>;
   /** True while the avatar's synthesized voice is being transmitted */
   isAvatarSpeaking: boolean;
   // DM calling
@@ -78,6 +84,9 @@ const VoiceCtx = createContext<VoiceContextValue>({
   toggleDeafen: () => {},
   hangUp: () => {},
   updateInputDevice: async () => {},
+  sharing: null,
+  startSharing: async () => {},
+  stopSharing: async () => {},
   replaceAudioTrack: async () => {},
   updateMaskIdentity: () => {},
   isAvatarSpeaking: false,
@@ -109,6 +118,7 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     participants, localStream, isMuted, isDeafened, isConnected,
     join, leave, toggleMute, toggleDeafen, updateInputDevice, replaceAudioTrack,
     updateSpeakingState, updateMaskIdentity, reconnectPeers,
+    sharing, startSharing, stopSharing,
   } = useVoiceChannel(voiceGuildId, voiceChannelId, userId);
 
   useMaskyVoice({
@@ -408,6 +418,9 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
       updateInputDevice,
       replaceAudioTrack,
       updateMaskIdentity,
+      sharing,
+      startSharing,
+      stopSharing,
       isAvatarSpeaking,
       isDmCall,
       dmCallPartnerId,

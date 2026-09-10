@@ -232,6 +232,9 @@ export interface VoiceState {
    *  sidebar list and remote tiles — shows the mask, not the real name). */
   maskName?: string;
   maskAvatarUrl?: string;
+  /** Set while this user is sharing their screen or camera into the call, so
+   *  peers know to render their video track instead of their avatar. */
+  sharing?: 'screen' | 'camera' | null;
 }
 
 // ─── Live Channel ─────────────────────────────────────────────────────────────

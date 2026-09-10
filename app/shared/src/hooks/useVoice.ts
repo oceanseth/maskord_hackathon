@@ -44,6 +44,38 @@ export interface JoinOptions {
   deviceId?: string;
 }
 
+/** What a participant is sharing into the call. */
+export type ShareKind = 'screen' | 'camera' | null;
+
+/**
+ * A still, black video track.
+ *
+ * Every peer connection negotiates a video m-line at join time by carrying one
+ * of these. Without it, starting a screen share later would mean adding a track
+ * to a live connection, which requires renegotiation — and the RTDB signalling
+ * here only ever exchanges one offer and one answer. With it, sharing is a
+ * `replaceTrack` on an existing sender: no new SDP, no new signalling.
+ *
+ * A static canvas encodes to almost nothing on the wire.
+ */
+function createPlaceholderVideoTrack(): MediaStreamTrack | null {
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 2;
+    canvas.height = 2;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, 2, 2);
+    const stream = (canvas as HTMLCanvasElement & {
+      captureStream?: (fps?: number) => MediaStream;
+    }).captureStream?.(1);
+    return stream?.getVideoTracks()[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function useVoiceChannel(
   guildId: string | null,
   channelId: string | null,
@@ -51,6 +83,14 @@ export function useVoiceChannel(
 ) {
   const [participants, setParticipants] = useState<VoiceParticipant[]>([]);
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  /** What this user is currently sharing into the call, if anything. */
+  const [sharing, setSharing] = useState<ShareKind>(null);
+  /** The live screen/camera track, kept so it can be stopped on switch or leave. */
+  const shareTrackRef = useRef<MediaStreamTrack | null>(null);
+  /** Black 1×1 track that holds the video m-line open from the moment we
+   *  connect, so starting a share is a replaceTrack rather than a
+   *  renegotiation — this signalling path has no renegotiation support. */
+  const placeholderRef = useRef<MediaStreamTrack | null>(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -149,14 +189,30 @@ export function useVoiceChannel(
           : AUDIO_CONSTRAINTS,
       });
       log('Got local stream — tracks:', stream.getTracks().map(t => `${t.kind}(${t.label || 'default'})`).join(', '));
-      setLocalStream(stream);
     } catch (e) {
       warn('getUserMedia failed — joining as listener (no mic):', e);
     }
 
+    // Hold the video m-line open from the start so screen/camera sharing later
+    // is a replaceTrack rather than a renegotiation. Also gives listener-mode
+    // users (no mic) something to share from.
+    const placeholder = createPlaceholderVideoTrack();
+    if (placeholder) {
+      placeholderRef.current = placeholder;
+      if (!stream) stream = new MediaStream();
+      stream.addTrack(placeholder);
+    }
+    if (stream) setLocalStream(stream);
+
     const rtdb = getFirebaseRtdb();
     voiceStateRef.current = ref(rtdb, `voiceState/${guildId}/${channelId}/${localUserId}`);
-    const voiceData: VoiceState = { joinedAt: Date.now(), muted: !stream, deafened: false };
+    // Muted means "no microphone", not "no stream" — the stream always exists
+    // now that it carries the video placeholder.
+    const voiceData: VoiceState = {
+      joinedAt: Date.now(),
+      muted: (stream?.getAudioTracks().length ?? 0) === 0,
+      deafened: false,
+    };
 
     // Register presence — retry once if auth token hasn't propagated to RTDB yet
     const writeVoiceState = async (stateRef: DatabaseReference) => {
@@ -281,6 +337,76 @@ export function useVoiceChannel(
     });
     await Promise.all(replacements);
   }, []);
+
+  // ─── Screen / camera sharing ────────────────────────────────────────────────
+  //
+  // The video sender already exists (see createPlaceholderVideoTrack), so
+  // starting and stopping a share is only ever a replaceTrack. Peers are told
+  // what is happening through RTDB voice state so they know to render video
+  // instead of the avatar — the black placeholder is indistinguishable from a
+  // real feed otherwise.
+
+  const replaceVideoTrack = useCallback(async (track: MediaStreamTrack | null) => {
+    const swaps: Promise<void>[] = [];
+    peerConnections.current.forEach((pc) => {
+      const sender = pc.getSenders().find((s) => s.track?.kind === 'video');
+      if (sender) swaps.push(sender.replaceTrack(track).catch(() => {}));
+    });
+    await Promise.all(swaps);
+  }, []);
+
+  const publishSharing = useCallback((kind: ShareKind) => {
+    const stateRef = voiceStateRef.current;
+    if (!stateRef) return;
+    set(child(stateRef, 'sharing'), kind).catch(() => {});
+  }, []);
+
+  const stopSharing = useCallback(async () => {
+    shareTrackRef.current?.stop();
+    shareTrackRef.current = null;
+    await replaceVideoTrack(placeholderRef.current);
+    setLocalStream((prev) => {
+      if (!prev) return prev;
+      prev.getVideoTracks().forEach((t) => { if (t !== placeholderRef.current) prev.removeTrack(t); });
+      if (placeholderRef.current && !prev.getVideoTracks().includes(placeholderRef.current)) {
+        prev.addTrack(placeholderRef.current);
+      }
+      return new MediaStream(prev.getTracks());
+    });
+    setSharing(null);
+    publishSharing(null);
+  }, [replaceVideoTrack, publishSharing]);
+
+  const startSharing = useCallback(async (kind: 'screen' | 'camera') => {
+    let track: MediaStreamTrack;
+    try {
+      const media = kind === 'screen'
+        ? await navigator.mediaDevices.getDisplayMedia({ video: true })
+        : await navigator.mediaDevices.getUserMedia({ video: true });
+      const [videoTrack] = media.getVideoTracks();
+      if (!videoTrack) throw new Error('no video track');
+      track = videoTrack;
+    } catch (e) {
+      // User cancelled the picker, or the device is unavailable. Not an error.
+      warn(`${kind} share not started:`, e);
+      return;
+    }
+
+    shareTrackRef.current?.stop();
+    shareTrackRef.current = track;
+
+    // Browsers show their own "Stop sharing" affordance; honour it.
+    track.onended = () => { void stopSharing(); };
+
+    await replaceVideoTrack(track);
+    setLocalStream((prev) => {
+      const next = new MediaStream(prev ? prev.getAudioTracks() : []);
+      next.addTrack(track);
+      return next;
+    });
+    setSharing(kind);
+    publishSharing(kind);
+  }, [replaceVideoTrack, publishSharing, stopSharing]);
 
   // ─── Speaking state → RTDB (for sidebar indicators) ─────────────────────────
 
@@ -657,6 +783,9 @@ export function useVoiceChannel(
     updateSpeakingState,
     updateMaskIdentity,
     reconnectPeers,
+    sharing,
+    startSharing,
+    stopSharing,
   };
 }
 
