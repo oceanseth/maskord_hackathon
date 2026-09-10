@@ -1,7 +1,7 @@
 import * as admin from 'firebase-admin';
 import * as crypto from 'crypto';
 import { onDocumentCreated, onDocumentUpdated } from 'firebase-functions/v2/firestore';
-import { onRequest } from 'firebase-functions/v2/https';
+import { onRequest, onCall, HttpsError } from 'firebase-functions/v2/https';
 import Anthropic from '@anthropic-ai/sdk';
 import { createConversation, generateAndVoiceReply, postTurn } from './maskyConversation';
 import {
@@ -628,6 +628,23 @@ async function inviteAvatar(
     false,
   );
 }
+
+/**
+ * The same invite, callable from the UI. The avatar picker in the invite window
+ * needs exactly what the tool does, so it shares the implementation rather than
+ * growing a second one that can drift.
+ */
+export const inviteAvatarToVoice = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+  const { guildId, name } = request.data as { guildId?: string; name?: string };
+  if (!guildId || !name) throw new HttpsError('invalid-argument', 'guildId and name required');
+
+  const presence = await loadVoicePresence(guildId);
+  const result = await inviteAvatar(guildId, request.auth.uid, presence, name);
+  const message = result.content.map((c) => ('text' in c ? c.text : '')).join(' ').trim();
+  if (result.isError) throw new HttpsError('failed-precondition', message);
+  return { ok: true, message };
+});
 
 const READ_ATTACHMENT_TOOL: Anthropic.Tool = {
   name: 'read_attachment',

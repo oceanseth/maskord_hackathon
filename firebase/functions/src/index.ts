@@ -12,6 +12,7 @@ const db = admin.firestore();
 export {
   onClaudeChannelMessage, onClaudeTranscriptUtterance,
   onChannelAiDisabled, onGuildAiDisabled, agentSpeak,
+  inviteAvatarToVoice,
 } from './claudeAgent';
 import { removeAvatarsInvitedBy } from './channelAvatars';
 import { forwardRoomEventToAgents } from './agentbox';
