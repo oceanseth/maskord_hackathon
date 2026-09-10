@@ -546,6 +546,89 @@ async function maskyApi(
   }
 }
 
+const INVITE_AVATAR_TOOL: Anthropic.Tool = {
+  name: 'invite_avatar',
+  description:
+    "Bring one of the speaker's own avatars into the voice channel they are in, so it "
+    + 'can talk with everyone. Use it whenever someone asks for an avatar to be invited, '
+    + 'brought in, added or summoned. The avatar must already exist on their account — '
+    + 'create it first if it does not.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: "The avatar's name, e.g. Captain Zeus." },
+    },
+    required: ['name'],
+  },
+};
+
+/**
+ * Add an avatar to a live voice channel on the requester's behalf.
+ *
+ * This is the same work the spoken "invite X" path does, exposed as a tool so it
+ * no longer depends on the utterance matching a regex *and* addressing the
+ * primary avatar by name. The avatar comes from the requester's own account and
+ * is voiced on their own key.
+ */
+async function inviteAvatar(
+  guildId: string,
+  requesterUid: string | undefined,
+  presence: VoicePresence[],
+  name: string,
+): Promise<{ content: Anthropic.TextBlockParam[]; isError: boolean }> {
+  const say = (text: string, isError = true) => ({ content: [{ type: 'text' as const, text }], isError });
+
+  if (!guildId || !requesterUid) return say('There is no channel to invite anyone into.');
+  if (!name.trim()) return say('No avatar name was given.');
+
+  // Whichever voice channel the requester is sitting in.
+  const channelId = presence.find((p) => p.userId === requesterUid)?.channelId;
+  if (!channelId) {
+    return say(
+      'They are not in a voice channel right now, so there is nowhere to bring an avatar. '
+      + 'Tell them to join one first.',
+    );
+  }
+
+  const key = await ensureUserMaskyKey(requesterUid);
+  if (!key) return say('That user has no masky account key.');
+
+  const active = await loadActiveAvatars(guildId, channelId);
+  if (active.some((a) => a.displayName.toLowerCase() === name.trim().toLowerCase())) {
+    return say(`${name} is already in the channel.`, false);
+  }
+
+  const found = await resolveAvatarByName(
+    [requesterUid], name.trim().toLowerCase(), new Set(active.map((a) => a.avatarId)),
+  );
+  if (!found?.meta.avatarId) {
+    return say(
+      `There is no avatar called "${name}" on their account. Offer to create one rather than `
+      + 'pretending it joined.',
+    );
+  }
+
+  const conv = await createConversation({
+    apiKey: key, avatarOwnerUserId: found.ownerUid, avatarId: found.meta.avatarId,
+  });
+  if (!conv) return say(`Could not start a conversation for ${found.meta.displayName}.`);
+
+  const newcomer = channelAvatarEntry(
+    found.meta, found.ownerUid, conv, { isPrimary: false, invitedBy: requesterUid },
+  );
+  await addActiveAvatar(guildId, channelId, newcomer);
+  await forwardRoomEventToAgents(guildId, channelId, {
+    type: 'avatar_joined',
+    avatar: { avatarId: newcomer.avatarId, name: newcomer.displayName },
+    invitedBy: { userId: requesterUid, name: presence.find((p) => p.userId === requesterUid)?.name ?? 'someone' },
+  }).catch(() => {});
+
+  return say(
+    `${found.meta.displayName} is now in the voice channel. Welcome them in one short line.`,
+    false,
+  );
+}
+
 const READ_ATTACHMENT_TOOL: Anthropic.Tool = {
   name: 'read_attachment',
   description:
@@ -774,6 +857,7 @@ async function runTurn(opts: {
   if (attachments.size > 0) tools.push(READ_ATTACHMENT_TOOL);
   if (canCapture) tools.push(CAPTURE_STREAM_TOOL);
   if (opts.requesterUid) tools.push(MASKY_DOCS_TOOL, MASKY_API_TOOL);
+  if (opts.requesterUid && opts.guildId) tools.push(INVITE_AVATAR_TOOL);
 
   // Conversation grows as tool rounds are appended, so it is not the caller's
   // array.
@@ -820,6 +904,7 @@ async function runTurn(opts: {
     for (const use of toolUses) {
       const input = (use.input ?? {}) as {
         id?: string; userId?: string; method?: string; path?: string; body?: unknown;
+        name?: string;
       };
       let outcome: {
         content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>;
@@ -834,6 +919,11 @@ async function runTurn(opts: {
           break;
         case MASKY_API_TOOL.name:
           outcome = await maskyApi(opts.requesterUid, input);
+          break;
+        case INVITE_AVATAR_TOOL.name:
+          outcome = await inviteAvatar(
+            opts.guildId ?? '', opts.requesterUid, presence, input.name ?? '',
+          );
           break;
         default:
           outcome = await readAttachment(attachments.get(input.id ?? ''));
