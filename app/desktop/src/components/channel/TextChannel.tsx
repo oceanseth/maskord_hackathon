@@ -105,8 +105,42 @@ export default function TextChannel({ guildId, channelId }: Props) {
 
   return (
     <div className="flex-1 flex min-h-0 bg-[#0e0e16]">
-      {/* Message area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      {/* Message area — the whole column is the drop target, so a file can be
+          dropped onto the composer as readily as onto the message list. */}
+      <div
+        className="relative flex-1 flex flex-col min-w-0"
+        onDragEnter={(e) => {
+          if (!hasFiles(e)) return;
+          dragDepth.current += 1;
+          setDragging(true);
+        }}
+        onDragOver={(e) => {
+          if (hasFiles(e)) e.preventDefault();
+        }}
+        onDragLeave={(e) => {
+          if (!hasFiles(e)) return;
+          dragDepth.current = Math.max(0, dragDepth.current - 1);
+          if (dragDepth.current === 0) setDragging(false);
+        }}
+        onDrop={(e) => {
+          if (!hasFiles(e)) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          if (e.dataTransfer.files.length) void sendFiles(e.dataTransfer.files);
+        }}
+      >
+        {dragging && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#0e0e16]/85 backdrop-blur-sm pointer-events-none">
+            <div className="px-10 py-8 rounded-2xl border-2 border-dashed border-violet-500 text-center">
+              <p className="text-white font-semibold text-xl">Drop to share in #{channelName}</p>
+              <p className="text-[#94a3b8] text-sm mt-2">
+                Images and video play inline. Anything else becomes a download.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* Channel header */}
         <div className="h-12 flex items-center gap-2 px-4 border-b border-[#1e1e2e] flex-shrink-0">
           <MobileBackButton onClick={() => useAppStore.getState().setActiveChannel(null, 'text')} />
@@ -114,41 +148,8 @@ export default function TextChannel({ guildId, channelId }: Props) {
           <span className="font-semibold text-white text-sm">{channelName}</span>
         </div>
 
-        {/* Messages — the drop target for file sharing */}
-        <div
-          className="relative flex-1 min-h-0"
-          onDragEnter={(e) => {
-            if (!hasFiles(e)) return;
-            dragDepth.current += 1;
-            setDragging(true);
-          }}
-          onDragOver={(e) => {
-            if (hasFiles(e)) e.preventDefault();
-          }}
-          onDragLeave={(e) => {
-            if (!hasFiles(e)) return;
-            dragDepth.current = Math.max(0, dragDepth.current - 1);
-            if (dragDepth.current === 0) setDragging(false);
-          }}
-          onDrop={(e) => {
-            if (!hasFiles(e)) return;
-            e.preventDefault();
-            dragDepth.current = 0;
-            setDragging(false);
-            if (e.dataTransfer.files.length) void sendFiles(e.dataTransfer.files);
-          }}
-        >
-          {dragging && (
-            <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#0e0e16]/85 backdrop-blur-sm pointer-events-none">
-              <div className="px-10 py-8 rounded-2xl border-2 border-dashed border-violet-500 text-center">
-                <p className="text-white font-semibold text-xl">Drop to share in #{channelName}</p>
-                <p className="text-[#94a3b8] text-sm mt-2">
-                  Images and video play inline. Anything else becomes a download.
-                </p>
-              </div>
-            </div>
-          )}
-
+        {/* Messages */}
+        <div className="flex-1 min-h-0">
           {loading ? (
             <div className="flex items-center justify-center h-full text-[#6b7280] text-sm">
               Loading messages...

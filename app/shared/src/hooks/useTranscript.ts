@@ -4,11 +4,17 @@ import {
   type Timestamp,
 } from 'firebase/firestore';
 import { getFirebaseDb } from '../firebase/init';
+import type { Attachment } from '../types';
 
 export interface TranscriptUtterance {
   id:        string;
   userId:    string;
   text:      string;
+  /** Files shared into the voice channel. Bytes live in Convex storage; only
+   *  the resolved URL and metadata are stored here. The transcript rules
+   *  validate specific fields rather than restricting the key set, so this
+   *  extra field is accepted without a rules change. */
+  attachments?: Attachment[];
   /** Origin: typed message in the voice channel chat, client STT, the masky
    *  avatar rewrite pipeline, or the AI agent's reply. */
   source:    'typed' | 'stt' | 'masky-rewrite' | 'agent-reply';
@@ -73,6 +79,7 @@ export function useTranscript(
           userId:    (data.userId as string) ?? '',
           text:      (data.text as string) ?? '',
           source:    (data.source as TranscriptUtterance['source']) ?? 'stt',
+          attachments: (data.attachments as Attachment[] | undefined) ?? undefined,
           createdAt: (data.createdAt as Timestamp | null) ?? null,
           audioUrl:  data.audioUrl as string | undefined,
           audioUrls: data.audioUrls as string[] | undefined,
@@ -114,6 +121,8 @@ export async function appendTranscriptUtterance(
      *  mask (not their real profile name/avatar). */
     maskName?:      string;
     maskAvatarUrl?: string;
+    /** Files shared into the channel; bytes are already in Convex storage. */
+    attachments?:   Attachment[];
   },
 ): Promise<void> {
   if (!utt.text.trim()) return;
@@ -125,6 +134,7 @@ export async function appendTranscriptUtterance(
     source:    utt.source,
     ...(utt.maskName ? { maskName: utt.maskName } : {}),
     ...(utt.maskAvatarUrl ? { maskAvatarUrl: utt.maskAvatarUrl } : {}),
+    ...(utt.attachments?.length ? { attachments: utt.attachments } : {}),
     createdAt: serverTimestamp(),
   });
 }

@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   useTranscript, useUserProfiles, useAuth, appendTranscriptUtterance,
 } from '@maskord/shared';
 import type { TranscriptUtterance } from '@maskord/shared';
 import { formatDistanceToNow } from 'date-fns';
 import MessageInput from '../channel/MessageInput';
+import MessageAttachments from '../channel/MessageAttachments';
+import { uploadAttachment } from '../../lib/convexUploads';
 
 interface AvatarInfo { avatarId: string; displayName: string; thumbnailUrl?: string }
 
@@ -67,6 +69,9 @@ export default function ChatPanel({ guildId, channelId, avatarName, avatarsById,
   const busyRef   = useRef(false); // a reply is currently playing
   const mountedRef = useRef(true);
   const [playingId, setPlayingId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [dragging, setDragging] = useState(false);
   const [recheck, setRecheck] = useState(0); // bumped when a reply finishes
 
   useEffect(() => () => { mountedRef.current = false; }, []);
@@ -137,8 +142,72 @@ export default function ChatPanel({ guildId, channelId, avatarName, avatarsById,
     });
   }
 
+  /**
+   * Files shared into a voice channel ride on the transcript, same as typed
+   * messages. The bytes go to Convex; the utterance carries the resolved URL.
+   * Transcript rules require non-empty text, so the filename is the caption.
+   */
+  const sendFiles = useCallback(
+    async (files: FileList | File[]) => {
+      if (!firebaseUser) return;
+      setUploadError(null);
+
+      for (const file of Array.from(files)) {
+        setUploading(file.name);
+        try {
+          const attachment = await uploadAttachment(file);
+          await appendTranscriptUtterance(guildId, channelId, {
+            userId: firebaseUser.uid,
+            text:   file.name,
+            source: 'typed',
+            maskName:      selfMask?.name,
+            maskAvatarUrl: selfMask?.avatarUrl,
+            attachments:   [attachment],
+          });
+        } catch (err) {
+          setUploadError(err instanceof Error ? err.message : 'Upload failed');
+        } finally {
+          setUploading(null);
+        }
+      }
+    },
+    [firebaseUser, guildId, channelId, selfMask],
+  );
+
+  const dragDepth = useRef(0);
+  const hasFiles = (e: React.DragEvent) => e.dataTransfer?.types.includes('Files');
+
   return (
-    <div className="flex-shrink-0 border-t border-[#1e1e2e] bg-[#0a0a0f] flex flex-col h-64 md:h-80">
+    <div
+      className="relative flex-shrink-0 border-t border-[#1e1e2e] bg-[#0a0a0f] flex flex-col h-64 md:h-80"
+      onDragEnter={(e) => {
+        if (!hasFiles(e)) return;
+        dragDepth.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        if (hasFiles(e)) e.preventDefault();
+      }}
+      onDragLeave={(e) => {
+        if (!hasFiles(e)) return;
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragging(false);
+      }}
+      onDrop={(e) => {
+        if (!hasFiles(e)) return;
+        e.preventDefault();
+        dragDepth.current = 0;
+        setDragging(false);
+        if (e.dataTransfer.files.length) void sendFiles(e.dataTransfer.files);
+      }}
+    >
+      {dragging && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#0a0a0f]/85 backdrop-blur-sm pointer-events-none">
+          <div className="px-8 py-6 rounded-2xl border-2 border-dashed border-violet-500 text-center">
+            <p className="text-white font-semibold text-lg">Drop to share in chat</p>
+          </div>
+        </div>
+      )}
       {/* Header — hidden on mobile to leave room for the participant grid + the
           voice controls bar (which is what users need to reach on small screens). */}
       <div className="hidden md:flex items-center justify-between px-4 py-2 border-b border-[#1e1e2e] flex-shrink-0">
@@ -175,11 +244,16 @@ export default function ChatPanel({ guildId, channelId, avatarName, avatarsById,
       </div>
 
       {/* Input bar — same component as text channels */}
+      {uploadError && (
+        <p className="px-3 pb-1 text-xs text-red-400">{uploadError}</p>
+      )}
       <MessageInput
         placeholder="Send a message…"
         onSend={handleSend}
         padding="px-3 pb-3"
         disabled={!firebaseUser}
+        onAttach={sendFiles}
+        uploading={uploading}
       />
     </div>
   );
@@ -246,6 +320,7 @@ function ChatRow({ utterance, profile, avatarName, avatarsById, overrideText, is
         <p className="text-sm text-[#d4d8e0] whitespace-pre-wrap break-words selectable leading-relaxed">
           {bodyText}
         </p>
+        <MessageAttachments attachments={utterance.attachments} />
       </div>
     </div>
   );
