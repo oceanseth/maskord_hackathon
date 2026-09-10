@@ -510,6 +510,7 @@ export default function ChannelSidebar({ guildId }: Props) {
           guildId={guildId}
           currentName={guild.name}
           currentIconUrl={guild.iconUrl ?? ''}
+          currentAllowGuests={guild.settings?.allowGuests === true}
           inviterId={firebaseUser.uid}
           onClose={() => setShowSettings(false)}
         />

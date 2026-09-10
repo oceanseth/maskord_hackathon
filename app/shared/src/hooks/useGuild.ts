@@ -238,6 +238,19 @@ export async function updateGuildSettings(
   await updateDoc(doc(db, 'guilds', guildId), updates as Record<string, unknown>);
 }
 
+/**
+ * Opt this server in or out of guests (anonymous sign-ins). Written as a dotted
+ * field path rather than through updateGuildSettings, which takes a whole
+ * `settings` map and would drop the sibling keys it wasn't given.
+ *
+ * Advisory on its own — `joinGuildWithInvite` and `joinGuildAsMutualFriend` are
+ * what actually enforce it, and they are the only writers of guild membership.
+ */
+export async function setGuildAllowGuests(guildId: string, allowGuests: boolean) {
+  const db = getFirebaseDb();
+  await updateDoc(doc(db, 'guilds', guildId), { 'settings.allowGuests': allowGuests });
+}
+
 // ─── Upload guild icon ────────────────────────────────────────────────────────
 
 export async function uploadGuildIcon(guildId: string, file: File): Promise<string> {
