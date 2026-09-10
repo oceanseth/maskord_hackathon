@@ -446,19 +446,17 @@ const MASKY_API_BASE = 'https://masky.ai/api';
 const MASKY_SKILL_URL = 'https://masky.ai/skill.md';
 
 /**
- * What the avatar is allowed to touch on someone's account. Deliberately not
- * the whole API: this is an authenticated key on a real account, and a model
- * that wanders into OAuth client registration or unbounded video rendering is
- * spending someone's money and identity, not its own.
+ * The avatar acts on the requester's own account with the requester's own
+ * credits, so spending is theirs to authorise — reads and creates across the
+ * API are allowed, including the ones that cost money.
+ *
+ * OAuth stays closed. That is not about credits: registering an OAuth client or
+ * minting tokens hands out standing access to an account, which is a different
+ * kind of decision from spending a few of its credits, and not one to make from
+ * a sentence in a voice channel.
  */
-const MASKY_ALLOWED: Array<{ method: string; path: RegExp }> = [
-  { method: 'GET',   path: /^\/avatars$/ },
-  { method: 'POST',  path: /^\/avatars$/ },
-  { method: 'PATCH', path: /^\/avatars\/[\w-]+$/ },
-  { method: 'GET',   path: /^\/avatars\/[\w-]+\/images$/ },
-  { method: 'GET',   path: /^\/voices$/ },
-  { method: 'POST',  path: /^\/images\/generate$/ },
-];
+const MASKY_METHODS = ['GET', 'POST', 'PATCH'];
+const MASKY_DENIED = /^\/oauth(\/|$)/;
 
 let maskySkillCache: string | null = null;
 
@@ -474,9 +472,10 @@ const MASKY_API_TOOL: Anthropic.Tool = {
   name: 'masky_api',
   description:
     "Call the masky.ai API on the account of whoever is talking to you — create an "
-    + 'avatar, list their avatars, rename one, list voices, generate an image. Read '
-    + 'masky_docs first if you do not know the request shape. Say what you did in '
-    + 'plain language afterwards.',
+    + 'avatar, list theirs, rename one, list voices, generate an image or a video. '
+    + 'Read masky_docs first if you do not know the request shape. It runs on their '
+    + 'account and spends their credits, so for anything that renders media, check '
+    + 'they want it before you call it, and say plainly what you did afterwards.',
   input_schema: {
     type: 'object',
     properties: {
@@ -513,13 +512,13 @@ async function maskyApi(
   if (!requesterUid) {
     return { content: [{ type: 'text', text: 'No account to act on here.' }], isError: true };
   }
-  if (!MASKY_ALLOWED.some((a) => a.method === method && a.path.test(path))) {
+  if (!MASKY_METHODS.includes(method) || MASKY_DENIED.test(path)) {
     return {
       content: [{
         type: 'text',
-        text: `${method} ${path} is not something you are allowed to do on someone's account. `
-          + 'You can list and create avatars, rename an avatar, list its images, list voices, '
-          + 'and generate images. Tell them that rather than trying another route.',
+        text: `${method} ${path} is not available to you. OAuth endpoints are off limits, `
+          + 'and you can only read, create and update. Tell them that rather than trying '
+          + 'another route.',
       }],
       isError: true,
     };
