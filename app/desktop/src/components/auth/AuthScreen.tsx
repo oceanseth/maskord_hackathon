@@ -50,8 +50,16 @@ export default function AuthScreen() {
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ code, redirectUri: WEB_REDIRECT_URI }),
     })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Sign-in failed (${res.status})`);
+      .then(async (res) => {
+        if (!res.ok) {
+          // Surface the function's own reason — "invalid redirect URI" and
+          // "token exchange failed" mean very different things to debug.
+          const detail = await res
+            .json()
+            .then((b: { error?: string }) => b.error)
+            .catch(() => null);
+          throw new Error(detail ? `Sign-in failed: ${detail}` : `Sign-in failed (${res.status})`);
+        }
         return res.json() as Promise<{ firebaseToken: string }>;
       })
       .then(({ firebaseToken }) => signInWithCustomToken(getFirebaseAuth(), firebaseToken))

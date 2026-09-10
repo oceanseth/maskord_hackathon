@@ -14,14 +14,23 @@ const twitchClientSecret = defineSecret('TWITCH_CLIENT_SECRET');
 const TWITCH_CLIENT_ID = 'sgb17aslo6gesnetuqfnf6qql6jrae';
 
 const ALLOWED_REDIRECT_URIS = [
-  'http://localhost:2468',           // Electron desktop app
-  'https://www.maskord.com/app',     // Web app (production)
-  'https://maskord.com/app',         // Web app (apex — redirects to www)
+  'http://localhost:2468',                  // Electron desktop app
+  'https://www.maskord.com/app',            // Web app (production)
+  'https://maskord.com/app',                // Web app (apex — redirects to www)
+  'https://hackathon.maskord.com/app',      // Burning Token hackathon build
 ];
 
 export const twitchOAuth = onRequest(
   {
-    cors: ['https://www.maskord.com', 'https://maskord.com', /^http:\/\/localhost(:\d+)?$/],
+    // Both gates matter: the browser cannot read this response unless its origin
+    // is listed here, and the exchange is refused unless the redirect URI is in
+    // ALLOWED_REDIRECT_URIS above.
+    cors: [
+      'https://www.maskord.com',
+      'https://maskord.com',
+      'https://hackathon.maskord.com',
+      /^http:\/\/localhost(:\d+)?$/,
+    ],
     secrets: [twitchClientSecret],
   },
   async (req, res) => {
