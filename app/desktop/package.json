@@ -11,6 +11,8 @@
     "build": "tsc && vite build && electron-builder",
     "build:renderer": "vite build",
     "build:web": "vite build --config vite.web.config.ts",
+    "build:stt": "vite build --config vite.stt.config.ts",
+    "dev:stt": "vite --config vite.stt.config.ts",
     "preview": "vite preview"
   },
   "dependencies": {

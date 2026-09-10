@@ -50,6 +50,27 @@ Streaming is billed per hour the socket is open, so the client only holds a
 session while the user is connected, unmuted, and either the transcript or
 avatar voice mode wants it.
 
+### Testing it: /stt.html
+
+`app/desktop/src/stt/` is a standalone harness, published at `/stt.html`, that
+drives the same hook against the same callable under the same CSP as the app —
+but with no guild, no channel, no second person and no Firestore writes. Sign
+in, open the mic, talk, and watch the formatted turns land, with the token
+call, the keyterms and the push-to-talk gate all visible on the page.
+
+It is built and published separately from the client (`base: '/stt/'`, so its
+assets never mix with `/app/`'s), which means it can be published alongside a
+client build it is not part of — how a change to the voice path gets tested
+before it becomes the client everyone loads.
+
+```bash
+npm run dev:stt --workspace=app/desktop   # http://localhost:5173/stt/stt.html
+```
+
+Note the `blob:` in `index.html`'s `script-src`: worklet modules are fetched as
+scripts, and the STT downsampler is registered from a blob URL. Without it
+`addModule` throws and STT silently drops to Web Speech.
+
 ## Deploying
 
 Push to `main`. Anything touching `www/` publishes to the prod Convex
