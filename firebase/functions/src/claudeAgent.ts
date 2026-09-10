@@ -291,6 +291,150 @@ function isTextualType(t: string): boolean {
     || t === 'application/csv';
 }
 
+// ─── Live voice presence + frame capture ──────────────────────────────────────
+//
+// Screen and camera shares are peer-to-peer; this function is not a peer and
+// never sees the media. So capturing a frame is a round trip: the model asks,
+// the sharer's browser grabs a frame, uploads it to Convex, and writes the URL
+// back. Both legs travel through the sharer's own RTDB voice-state node, which
+// they are already allowed to write — no rules change.
+
+const CAPTURE_TIMEOUT_MS = 12_000;
+const CAPTURE_POLL_MS    = 500;
+
+interface VoicePresence {
+  channelId: string;
+  userId:    string;
+  name:      string;
+  sharing:   'screen' | 'camera' | null;
+  muted:     boolean;
+}
+
+/** Everyone currently sitting in a voice channel in this guild. */
+async function loadVoicePresence(guildId: string): Promise<VoicePresence[]> {
+  try {
+    const snap = await admin.database().ref(`voiceState/${guildId}`).get();
+    const byChannel = (snap.val() ?? {}) as Record<string, Record<string, {
+      muted?: boolean; maskName?: string; sharing?: 'screen' | 'camera' | null;
+    }>>;
+
+    const out: VoicePresence[] = [];
+    for (const [channelId, users] of Object.entries(byChannel)) {
+      for (const [userId, state] of Object.entries(users ?? {})) {
+        out.push({
+          channelId,
+          userId,
+          name:    state.maskName ?? await authorNameFor(userId),
+          sharing: state.sharing ?? null,
+          muted:   state.muted === true,
+        });
+      }
+    }
+    return out;
+  } catch (err) {
+    console.warn('[claudeAgent] voice presence read failed', err);
+    return [];
+  }
+}
+
+const CAPTURE_STREAM_TOOL: Anthropic.Tool = {
+  name: 'capture_stream',
+  description:
+    'Take a still frame from someone who is currently sharing their screen or camera '
+    + 'in a voice channel, and look at it. Use it when the conversation is about what '
+    + 'is on their screen or in front of their camera. Only works for people listed as '
+    + 'sharing; it asks their browser for a frame, which takes a few seconds.',
+  input_schema: {
+    type: 'object',
+    properties: {
+      userId: { type: 'string', description: 'The id of the person sharing, from the voice presence list.' },
+    },
+    required: ['userId'],
+  },
+};
+
+/**
+ * Ask a sharer's browser for a frame and wait for it. Returns tool_result
+ * content either way — a timeout is reported to the model as text so it can say
+ * so rather than invent what it did not see.
+ */
+async function captureStream(
+  guildId: string,
+  presence: VoicePresence[],
+  userId: string,
+): Promise<{ content: Array<Anthropic.TextBlockParam | Anthropic.ImageBlockParam>; isError: boolean }> {
+  const target = presence.find((p) => p.userId === userId && p.sharing);
+  if (!target) {
+    return {
+      content: [{ type: 'text', text: 'That person is not sharing a screen or camera right now.' }],
+      isError: true,
+    };
+  }
+
+  const node = admin.database().ref(`voiceState/${guildId}/${target.channelId}/${userId}`);
+  const requestId = crypto.randomUUID();
+
+  try {
+    await node.child('captureRequest').set({ id: requestId, at: Date.now() });
+  } catch (err) {
+    console.error('[claudeAgent] capture request write failed', err);
+    return { content: [{ type: 'text', text: 'Could not ask for a frame.' }], isError: true };
+  }
+
+  interface CaptureResult {
+    id?: string; url?: string; contentType?: string; error?: string;
+  }
+
+  const deadline = Date.now() + CAPTURE_TIMEOUT_MS;
+  let result: CaptureResult | null = null;
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, CAPTURE_POLL_MS));
+    const snap = await node.child('captureResult').get().catch(() => null);
+    const val = snap?.val() as CaptureResult | null;
+    if (val && val.id === requestId) { result = val; break; }
+  }
+
+  await node.child('captureRequest').remove().catch(() => {});
+
+  if (!result) {
+    return {
+      content: [{
+        type: 'text',
+        text: `${target.name}'s browser did not send a frame in time. Say you could not get a look rather than guessing.`,
+      }],
+      isError: true,
+    };
+  }
+  if (result.error || !result.url) {
+    return {
+      content: [{ type: 'text', text: `Could not capture that stream: ${result.error ?? 'no image returned'}.` }],
+      isError: true,
+    };
+  }
+
+  const media = result.contentType ?? 'image/jpeg';
+  if (!isVisionMediaType(media)) {
+    return { content: [{ type: 'text', text: `Unexpected frame format ${media}.` }], isError: true };
+  }
+
+  try {
+    const res = await fetch(result.url);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const buf = Buffer.from(await res.arrayBuffer());
+    return {
+      content: [{
+        type: 'image',
+        source: { type: 'base64', media_type: media, data: buf.toString('base64') },
+      }],
+      isError: false,
+    };
+  } catch (err) {
+    console.error('[claudeAgent] frame download failed', err);
+    return { content: [{ type: 'text', text: 'The frame could not be downloaded.' }], isError: true };
+  }
+}
+
 const READ_ATTACHMENT_TOOL: Anthropic.Tool = {
   name: 'read_attachment',
   description:
@@ -387,6 +531,7 @@ function buildSystemPrompt(
   mode: ChannelClaudeCfg['mode'],
   guildName: string,
   attachments: Map<string, AttachmentRef> = new Map(),
+  presence: VoicePresence[] = [],
 ): string {
   const tone = avatar.personalityPrompt?.trim()
     ? `\n\nPersonality:\n${avatar.personalityPrompt.trim()}`
@@ -400,6 +545,20 @@ ${[...attachments.entries()]
   .join('\n')}
 
 You cannot see their contents until you ask for them. Call read_attachment with the id when the conversation needs what is inside a file — someone asks you to describe, summarise, check or use it. Do not call it merely because a file was posted; acknowledging an upload by name is fine on its own. Never describe a file you have not read.`;
+
+  const sharers = presence.filter((p) => p.sharing);
+  const voice = presence.length === 0 ? '' : `
+
+In voice right now:
+${presence
+  .map((p) => {
+    const bits = [p.muted ? 'muted' : 'unmuted'];
+    if (p.sharing) bits.push(`sharing their ${p.sharing}`);
+    return `- ${p.name} (${p.userId}) — ${bits.join(', ')}`;
+  })
+  .join('\n')}${sharers.length === 0 ? '' : `
+
+Call capture_stream with someone's id to take a still frame of what they are sharing and look at it. It asks their browser for a frame and takes a few seconds, so only do it when the conversation is actually about what is on their screen or camera. If it fails, say you could not get a look — never guess at what is on someone's screen.`}`;
   const triggerNote = mode === 'mention'
     ? `Only respond if the latest message is directed at you (e.g. @${avatar.displayName}, addresses you by name, or clearly asks for your help). If it isn't, reply with exactly the single token NO_REPLY and nothing else.`
     : `Respond to the latest message in the channel. Stay terse unless a longer answer is required.`;
@@ -407,7 +566,7 @@ You cannot see their contents until you ask for them. Call read_attachment with 
 
 Multiple humans share this channel. Address them by name when replying. Keep responses short and conversational unless the user asks for depth. Format using GitHub-flavored markdown.
 
-${triggerNote}${files}${tone}`;
+${triggerNote}${files}${voice}${tone}`;
 }
 
 function buildMessagesArray(history: TurnSource[]): Array<{ role: 'user' | 'assistant'; content: string }> {
@@ -460,9 +619,19 @@ async function runTurn(opts: {
   destField:   'content' | 'text';
   /** Files the model may pull with read_attachment. Omit to disable the tool. */
   attachments?: Map<string, AttachmentRef>;
+  /** Guild whose voice presence capture_stream may reach into. */
+  guildId?: string;
+  /** Who is in voice, so capture_stream can find the sharer's channel. */
+  presence?: VoicePresence[];
 }): Promise<{ skipped: boolean; finalText: string }> {
   const client = new Anthropic({ apiKey: opts.apiKey });
   const attachments = opts.attachments ?? new Map<string, AttachmentRef>();
+  const presence = opts.presence ?? [];
+  const canCapture = Boolean(opts.guildId) && presence.some((p) => p.sharing);
+
+  const tools: Anthropic.Tool[] = [];
+  if (attachments.size > 0) tools.push(READ_ATTACHMENT_TOOL);
+  if (canCapture) tools.push(CAPTURE_STREAM_TOOL);
 
   // Conversation grows as tool rounds are appended, so it is not the caller's
   // array.
@@ -477,9 +646,7 @@ async function runTurn(opts: {
       max_tokens: MAX_TOKENS,
       system:     opts.systemPrompt,
       messages:   convo,
-      ...(attachments.size > 0 && round < MAX_TOOL_ROUNDS
-        ? { tools: [READ_ATTACHMENT_TOOL] }
-        : {}),
+      ...(tools.length > 0 && round < MAX_TOOL_ROUNDS ? { tools } : {}),
     });
 
     for await (const evt of stream) {
@@ -509,8 +676,10 @@ async function runTurn(opts: {
     // Feed each requested file back in, then let the model continue.
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const use of toolUses) {
-      const id = (use.input as { id?: string } | null)?.id ?? '';
-      const { content, isError } = await readAttachment(attachments.get(id));
+      const input = (use.input ?? {}) as { id?: string; userId?: string };
+      const { content, isError } = use.name === CAPTURE_STREAM_TOOL.name
+        ? await captureStream(opts.guildId ?? '', presence, input.userId ?? '')
+        : await readAttachment(attachments.get(input.id ?? ''));
       results.push({ type: 'tool_result', tool_use_id: use.id, content, is_error: isError });
     }
     convo.push({ role: 'assistant', content: final.content });
@@ -580,7 +749,8 @@ export const onClaudeChannelMessage = onDocumentCreated(
 
     const guildName  = (await db.doc(`guilds/${guildId}`).get()).data()?.name ?? 'this server';
     const attachments  = indexAttachments(history);
-    const systemPrompt = buildSystemPrompt(avatar, channel.mode, guildName, attachments);
+    const presence     = await loadVoicePresence(guildId);
+    const systemPrompt = buildSystemPrompt(avatar, channel.mode, guildName, attachments, presence);
     const messages     = buildMessagesArray(history);
     if (messages.length === 0) return;
 
@@ -607,6 +777,8 @@ export const onClaudeChannelMessage = onDocumentCreated(
         destRef,
         destField:    'content',
         attachments,
+        guildId,
+        presence,
       });
       if (skipped) {
         await destRef.delete().catch(() => {});

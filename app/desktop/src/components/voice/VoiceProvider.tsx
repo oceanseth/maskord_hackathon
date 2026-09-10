@@ -18,6 +18,7 @@ import { useAppStore } from '../../store/app';
 import { useVoiceSettings } from '../../hooks/useVoiceSettings';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
 import { useMaskyVoice } from '../../hooks/useMaskyVoice';
+import { useCaptureResponder } from '../../hooks/useCaptureResponder';
 
 export interface VoiceContextValue {
   participants: VoiceParticipant[];
@@ -120,6 +121,16 @@ export function VoiceProvider({ children }: { children: React.ReactNode }) {
     updateSpeakingState, updateMaskIdentity, reconnectPeers,
     sharing, startSharing, stopSharing,
   } = useVoiceChannel(voiceGuildId, voiceChannelId, userId);
+
+  // Answers the agent's capture_stream requests for this user's shared screen
+  // or camera. No-op unless they are actually sharing.
+  useCaptureResponder({
+    guildId:   voiceGuildId,
+    channelId: voiceChannelId,
+    userId,
+    localStream,
+    isSharing: sharing !== null,
+  });
 
   useMaskyVoice({
     uid:                   userId,
