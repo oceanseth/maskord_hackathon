@@ -158,4 +158,24 @@ export default defineSchema({
   })
     .index('by_room', ['roomId'])
     .index('by_room_claim', ['roomId', 'claim', 'iteration']),
+
+  // One D&D game per wizard room. Nested state is stored as-is (see
+  // wizard/types.ts for the shapes); every change to it happens inside one
+  // mutation so a round never half-applies.
+  wizardGames: defineTable({
+    roomId: v.id('rooms'),
+    phase: v.string(),
+    mapKey: v.string(),
+    round: v.number(),
+    turnIndex: v.number(),
+    /** Bumps every time a new turn begins; scheduled turns carry it and bail if stale. */
+    turnToken: v.number(),
+    combatants: v.any(),
+    characters: v.any(),
+    creatures: v.any(),
+    seats: v.any(),
+    turn: v.any(),
+    fires: v.any(),
+    xp: v.number(),
+  }).index('by_room', ['roomId']),
 });
