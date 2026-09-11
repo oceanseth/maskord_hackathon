@@ -21,6 +21,11 @@ export interface WizardAction {
   say?: string;
 }
 
+/** A channel in D&D mode binds to exactly one table: slug `wizard:ch-<channelId>`. */
+export function channelRoomSlug(channelId: string): string {
+  return `wizard:ch-${channelId}`;
+}
+
 /** The D&D layer over a room: the game document plus the mutations a page needs. */
 export function useWizard(room: RoomHandle) {
   const { roomId, me } = room;

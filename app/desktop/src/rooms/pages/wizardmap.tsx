@@ -1,7 +1,7 @@
 import { RoomScreen, mountRoomPage } from '../RoomShell';
 import { StatusPill } from '../RoomPanel';
 import { useRoom } from '../useRoom';
-import { useWizard } from '../wizard/useWizard';
+import { channelRoomSlug, useWizard } from '../wizard/useWizard';
 import { TileMap } from '../wizard/TileMap';
 import { PREGENS } from '../../../../../www/convex/wizard/pregens';
 import '../wizard/theme.css';
@@ -11,7 +11,9 @@ import '../wizard/theme.css';
  * It joins nothing and posts nothing, so it is safe on a projector.
  */
 function WizardMap() {
-  const room = useRoom({ kind: 'wizard', title: "The Wizard's Table", identity: null });
+  // `?ch=<channelId>` is a channel's table (the in-app D&D mode); `?room=` is a page table.
+  const ch = new URLSearchParams(window.location.search).get('ch');
+  const room = useRoom({ kind: 'wizard', slug: ch ? channelRoomSlug(ch) : undefined, title: "The Wizard's Table", identity: null });
   const wiz = useWizard(room);
   const hostLines = room.events.filter((e) => e.type === 'host' || e.type === 'dice').slice(-8);
   const cell = Math.max(16, Math.min(44, Math.floor((window.innerWidth - 360) / wiz.map.width)));
