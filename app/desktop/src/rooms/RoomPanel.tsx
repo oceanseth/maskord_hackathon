@@ -14,6 +14,7 @@ export function RoomPanel({
   renderEvent,
   memberExtra,
   placeholder = 'Say something…',
+  onSay,
 }: {
   room: RoomHandle;
   header?: ReactNode;
@@ -21,6 +22,8 @@ export function RoomPanel({
   renderEvent?: (e: RoomEvent) => ReactNode | undefined;
   memberExtra?: (m: RoomMember) => ReactNode;
   placeholder?: string;
+  /** Override where plain text goes (the D&D page sends it to the DM). */
+  onSay?: (text: string) => Promise<unknown>;
 }) {
   const { room: doc, members, events, me, post, setStatus } = room;
   const status = doc?.status ?? 'lobby';
@@ -67,7 +70,7 @@ export function RoomPanel({
 
       {footer}
 
-      {me && <SayBox onSend={(type, body) => post(type, body)} placeholder={placeholder} />}
+      {me && <SayBox onSend={(type, body) => (onSay && type === 'say' ? onSay(body) : post(type, body))} placeholder={placeholder} />}
     </div>
   );
 }

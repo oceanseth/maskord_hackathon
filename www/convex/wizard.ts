@@ -4,6 +4,7 @@ import type { MutationCtx, QueryCtx } from './_generated/server';
 import { api, internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent, joinMember } from './rooms';
+import { hasInference } from './agent';
 import { PREGENS, SHEET_KEYS } from './wizard/pregens';
 import { BEACH_ZOMBIE_START, HOUSE_MASKS, MAPS, SPELLS, STAT_BLOCKS, ZOMBIE_NAMES } from './wizard/scenario';
 import {
@@ -279,10 +280,13 @@ async function seatCharacterLate(ctx: MutationCtx, room: Doc<'rooms'>, game: Gam
 // Start
 
 export const start = mutation({
-  args: { roomId: v.id('rooms'), byKey: v.string() },
-  handler: async (ctx, { roomId, byKey }) => {
+  args: { roomId: v.id('rooms'), byKey: v.string(), guildId: v.optional(v.string()) },
+  handler: async (ctx, { roomId, byKey, guildId }) => {
     const { room, game } = await roomAndGame(ctx, roomId);
     if (game.phase !== 'lobby') throw new Error('Already started');
+    // The server the starter has open pays for the masks' thinking, through the
+    // bridge in firebase/functions (see agent.roomCredentials).
+    if (guildId) await ctx.db.patch(roomId, { config: { ...(room.config ?? {}), guildId, startedBy: byKey } });
     const members = await ctx.db
       .query('roomMembers')
       .withIndex('by_room', (q) => q.eq('roomId', roomId))
@@ -1130,7 +1134,7 @@ export const maskTurn = internalMutation({
     const seat = (game.seats as Seats)[c.sheetKey];
     if (!seat || seat.ownerKind !== 'mask') return;
     const member = await memberOf(ctx, roomId, seat.ownerKey);
-    if (!process.env.ANTHROPIC_API_KEY) {
+    if (!hasInference((room.config as { guildId?: string } | undefined)?.guildId)) {
       // No inference: the table still plays.
       await ctx.scheduler.runAfter(0, internal.wizard.maskFallback, { roomId, turnToken });
       return;
@@ -1221,9 +1225,9 @@ function buildMaskPrompt(game: Game, c: CharacterState, persona: string, maskNam
 export const narrate = internalMutation({
   args: { roomId: v.id('rooms'), beat: v.string() },
   handler: async (ctx, { roomId, beat }) => {
-    if (!process.env.ANTHROPIC_API_KEY) return;
     const room = await ctx.db.get(roomId);
     if (!room) return;
+    if (!hasInference((room.config as { guildId?: string } | undefined)?.guildId)) return;
     const game = await gameFor(ctx, roomId);
     const roster = ((game?.characters ?? []) as CharacterState[]).map((c) => `${c.name} the ${PREGENS[c.sheetKey].race} ${PREGENS[c.sheetKey].className}`).join(', ');
     await ctx.scheduler.runAfter(0, internal.agent.runTurn, {
