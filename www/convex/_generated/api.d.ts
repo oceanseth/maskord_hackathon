@@ -9,6 +9,7 @@
  */
 
 import type * as agent from "../agent.js";
+import type * as debate from "../debate.js";
 import type * as files from "../files.js";
 import type * as messages from "../messages.js";
 import type * as presence from "../presence.js";
@@ -24,6 +25,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agent: typeof agent;
+  debate: typeof debate;
   files: typeof files;
   messages: typeof messages;
   presence: typeof presence;
