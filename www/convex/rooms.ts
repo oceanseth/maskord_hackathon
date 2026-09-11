@@ -119,6 +119,13 @@ export const ensure = mutation({
     config: v.optional(v.any()),
   },
   handler: async (ctx, { slug, kind, title, hostName, config }) => {
+    // The slug namespace is `<kind>:<name>` (see roomSlugFromLocation on the
+    // client), so ?room=friday is a different room on each page. Enforce it
+    // here rather than trusting callers: a wizard room named "debate:x" would
+    // otherwise be opened by the debate page as its own.
+    if (!slug.startsWith(`${kind}:`)) {
+      throw new Error(`room slug "${slug}" must start with "${kind}:"`);
+    }
     const existing = await getRoomBySlug(ctx, slug);
     if (existing) return existing._id;
 

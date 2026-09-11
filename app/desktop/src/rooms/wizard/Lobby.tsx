@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { PREGENS, SHEET_KEYS } from '../../../../../www/convex/wizard/pregens';
-import { HOUSE_MASKS } from '../../../../../www/convex/wizard/scenario';
+import { HOUSE_MASKS } from '../../../../../www/convex/cast';
 import type { SheetKey } from '../../../../../www/convex/wizard/types';
 import { useMaskyAvatars } from '../../hooks/useMaskyAvatars';
 import { SheetCard } from './SheetCard';

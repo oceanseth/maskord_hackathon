@@ -7,7 +7,8 @@ import { appendEvent, joinMember } from './rooms';
 import { hasInference } from './agent';
 import { hasResearch } from './research';
 import { PREGENS, SHEET_KEYS } from './wizard/pregens';
-import { BEACH_ZOMBIE_START, HOUSE_MASKS, MAPS, SPELLS, STAT_BLOCKS, ZOMBIE_NAMES } from './wizard/scenario';
+import { HOUSE_MASKS } from './cast';
+import { BEACH_ZOMBIE_START, MAPS, SPELLS, STAT_BLOCKS, ZOMBIE_NAMES } from './wizard/scenario';
 import {
   abilityMod,
   skillBonus,
