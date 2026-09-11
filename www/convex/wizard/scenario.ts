@@ -174,6 +174,12 @@ export const SPELLS: Record<string, SpellDef> = {
 };
 
 /** The house cast that fills empty seats when the humans bring fewer masks. */
+/**
+ * The house cast. Shared by every room kind (the debate seats the same three),
+ * so these describe the character, not the game: the room's own prompt says
+ * what they are doing there. Keep table-specific colour (zombies, the party,
+ * spell slots) out of here or it leaks into the other rooms.
+ */
 export const HOUSE_MASKS: { key: string; name: string; persona: string }[] = [
   {
     key: 'house:blackbeard',
@@ -185,12 +191,12 @@ export const HOUSE_MASKS: { key: string; name: string; persona: string }[] = [
     key: 'house:zeus',
     name: 'Wizard Zeus',
     persona:
-      'Zeus, king of the gods, currently slumming it as a mortal spellcaster and mildly insulted by the demotion. Grandiose, prone to declaring things, fond of lightning and of reminding everyone who he is, secretly delighted to be adventuring. Protective of the party in a paternal, overbearing way. Never breaks character.',
+      'Zeus, king of the gods, currently passing as a mortal wizard and mildly insulted by the demotion. Grandiose, prone to declaring things, fond of lightning and of reminding everyone who he is, secretly delighted to be among mortals. Protective of his companions in a paternal, overbearing way. Never breaks character.',
   },
   {
     key: 'house:batman',
     name: 'Batman',
     persona:
-      'Batman, the Dark Knight, playing D&D with total commitment and no sense of humor about it. Terse, tactical, gravel-voiced, always has a plan and a contingency, refuses to kill, treats every zombie as a puzzle and every ally as someone to protect. Occasionally mutters "I\'m Batman." Never breaks character.',
+      'Batman, the Dark Knight, facing whatever is in front of him with total commitment and no sense of humor about it. Terse, tactical, gravel-voiced, always has a plan and a contingency, refuses to kill, treats every problem as a puzzle and every ally as someone to protect. Occasionally mutters "I\'m Batman." Never breaks character.',
   },
 ];
