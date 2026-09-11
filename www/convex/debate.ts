@@ -8,7 +8,7 @@ import {
   query,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import { getRoomBySlug } from './rooms';
+import { TURN_CLAIM_TTL_MS, getRoomBySlug } from './rooms';
 import { callModel, hasInference, judgeModel } from './agent';
 import type { Doc, Id } from './_generated/dataModel';
 
@@ -22,6 +22,9 @@ import type { Doc, Id } from './_generated/dataModel';
  */
 
 const MAX_ROUNDS = 4;
+
+/** Bounds how fast an unauthenticated spectator can spend Linkup credit. */
+const FACT_CHECK_COOLDOWN_MS = 15_000;
 
 /**
  * Drawn 1–2 at a time to twist the goal. Kept as data rather than prose in a
@@ -60,6 +63,7 @@ export type DebateConfig = {
   /** memberKeys in speaking order, rebuilt whenever the roster changes. */
   order?: string[];
   cursor?: number;
+  lastFactCheckAt?: number;
   verdict?: {
     winner: string;
     summary: string;
@@ -277,9 +281,26 @@ export const takeTurn = internalMutation({
     const round = cfg.round ?? 1;
 
     if (round > (cfg.maxRounds ?? MAX_ROUNDS)) {
+      // Close the room in the same transaction that schedules the verdict.
+      // `advance` only fires while status is 'running', so this is what stops a
+      // ticking client from queueing a second judgement — and the judge runs on
+      // the expensive model, so a duplicate is real money rather than noise.
+      await ctx.db.patch(roomId, { status: 'finished' });
       await ctx.scheduler.runAfter(0, internal.debate.verdict, { roomId });
       return;
     }
+
+    // One speaker at a time. Every open tab runs the advance timer, so without
+    // this the table and the stats screen talk over each other. The claim is a
+    // lease with a TTL rather than a claim/release pair: `runTurn` is a shared
+    // action that knows nothing about debates, so there is nobody to hand the
+    // lease back, and a crashed turn must not wedge the room forever.
+    const now = Date.now();
+    const held = room.turn.claimedAt && room.turn.claimedAt + TURN_CLAIM_TTL_MS > now;
+    if (held) return;
+    await ctx.db.patch(roomId, {
+      turn: { runnerId: 'debate', claimedAt: now, seq: room.turn.seq + 1 },
+    });
 
     const memberKey = order[cursor % order.length];
     const member = await ctx.db
@@ -323,7 +344,7 @@ export const takeTurn = internalMutation({
  * Tool calls from a debater. Research is the only one the debate offers — the
  * mask asks for a fact-check in character and the Linkup loop does the rest.
  */
-export const onToolCall = mutation({
+export const onToolCall = internalMutation({
   args: {
     roomId: v.id('rooms'),
     memberKey: v.string(),
@@ -371,12 +392,24 @@ export const factCheck = mutation({
   handler: async (ctx, { slug, claim }) => {
     const room = await getRoomBySlug(ctx, slug);
     if (!room) throw new Error('no such room');
+    // Public by necessity — a spectator presses this — so it is also the one
+    // place an anonymous visitor can spend Linkup credit. Two cheap bounds: the
+    // debate has to be under way, and one check per room per cooldown.
+    if (room.status === 'lobby') return { queued: false as const, reason: 'not-started' };
+    const cfg = config(room);
+    const since = Date.now() - (cfg.lastFactCheckAt ?? 0);
+    if (since < FACT_CHECK_COOLDOWN_MS) {
+      return { queued: false as const, reason: 'cooldown' };
+    }
+    await ctx.db.patch(room._id, {
+      config: { ...(room.config ?? {}), lastFactCheckAt: Date.now() },
+    });
     await ctx.scheduler.runAfter(0, internal.research.investigate, {
       roomId: room._id,
       claim: claim.trim().slice(0, 400),
       askedBy: 'room',
     });
-    return { queued: true };
+    return { queued: true as const };
   },
 });
 

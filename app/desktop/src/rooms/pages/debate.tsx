@@ -33,9 +33,11 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
 
   const status = room.room?.status ?? 'lobby';
 
-  // A running debate advances on a timer. Every tab runs this; `advance` is a
-  // no-op unless the room is running, and the turn claim inside rooms.ts is
-  // what keeps two tabs from double-speaking.
+  // A running debate advances on a timer, and every open tab runs it. That is
+  // deliberate — no tab is special, so closing one does not stall the room —
+  // but it means the server has to be the thing that refuses a second speaker:
+  // `debate.takeTurn` leases the room's turn and drops any tick that arrives
+  // while a turn is already in flight. This interval is a nudge, not a schedule.
   useEffect(() => {
     if (status !== 'running' || !room.slug) return;
     const id = setInterval(() => {
