@@ -8,7 +8,7 @@ import {
   query,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import { appendEvent, getRoomBySlug } from './rooms';
+import { getRoomBySlug } from './rooms';
 import { callModel, hasInference, judgeModel } from './agent';
 import type { Doc, Id } from './_generated/dataModel';
 
