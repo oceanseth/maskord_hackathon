@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   configurePurchases,
+  currentAppUserId,
   getOffering,
   isPro,
   lapsedPro,
@@ -18,6 +19,8 @@ export interface MaskordProState {
   expiresAt: Date | null;
   info: CustomerInfo | null;
   offering: Offering | null;
+  /** The RevenueCat customer id, which the server re-checks before seating a rented mask. */
+  appUserId: string | null;
   loading: boolean;
   /** Read entitlements again — call after a purchase or when reopening a paywall. */
   refresh: () => Promise<void>;
@@ -32,12 +35,14 @@ export interface MaskordProState {
 export function useMaskordPro(uid: string | null): MaskordProState {
   const [info, setInfo] = useState<CustomerInfo | null>(null);
   const [offering, setOffering] = useState<Offering | null>(null);
+  const [appUserId, setAppUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const refresh = useCallback(async () => {
     if (!Purchases.isConfigured()) return;
     try {
       setInfo(await Purchases.getSharedInstance().getCustomerInfo());
+      setAppUserId(currentAppUserId());
     } catch {
       /* offline or the dashboard is mid-configuration — keep the last answer */
     }
@@ -58,10 +63,12 @@ export function useMaskordPro(uid: string | null): MaskordProState {
         if (cancelled) return;
         setInfo(customerInfo);
         setOffering(current);
+        setAppUserId(purchases.getAppUserId());
       } catch {
         if (!cancelled) {
           setInfo(null);
           setOffering(null);
+          setAppUserId(null);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -79,6 +86,7 @@ export function useMaskordPro(uid: string | null): MaskordProState {
     expiresAt: proExpiresAt(info),
     info,
     offering,
+    appUserId,
     loading,
     refresh,
   };

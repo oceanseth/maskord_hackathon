@@ -182,17 +182,10 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
               </div>
 
               <GuestStarShelf
+                slug={room.slug}
                 pro={pro.pro}
+                appUserId={pro.appUserId}
                 seated={seated}
-                onSeat={(mask) =>
-                  seatMask({
-                    slug: room.slug,
-                    memberKey: mask.memberKey,
-                    name: mask.name,
-                    persona: mask.persona,
-                    avatarUrl: mask.avatarUrl,
-                  })
-                }
                 onLocked={setPaywallFor}
               />
 

@@ -11,6 +11,7 @@ import { api, internal } from './_generated/api';
 import { TURN_CLAIM_TTL_MS, appendEvent, getRoomBySlug, joinMember } from './rooms';
 import { HOUSE_MASKS } from './wizard/scenario';
 import { callModel, hasInference, judgeModel } from './agent';
+import { RENTED_PREFIX } from './rentable';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
 
@@ -142,22 +143,53 @@ export const cast = query({
   handler: async () => HOUSE_MASKS,
 });
 
-/** Seat one mask as a debater. Used for the house panel and for your own avatar. */
+const seatArgs = {
+  slug: v.string(),
+  memberKey: v.string(),
+  name: v.string(),
+  persona: v.string(),
+  avatarUrl: v.optional(v.string()),
+};
+
+type SeatArgs = {
+  slug: string;
+  memberKey: string;
+  name: string;
+  persona: string;
+  avatarUrl?: string;
+};
+
+async function seat(ctx: MutationCtx, { slug, memberKey, name, persona, avatarUrl }: SeatArgs) {
+  const room = await getRoomBySlug(ctx, slug);
+  if (!room) throw new Error('no such room');
+  await joinMember(ctx, room._id, { memberKey, kind: 'mask', name, persona, avatarUrl });
+  await addToOrder(ctx, room._id, memberKey);
+  return { seated: true as const };
+}
+
+/**
+ * Seat one mask as a debater. Used for the house panel and for your own avatar.
+ *
+ * Somebody else's mask is refused here on purpose. A `rent:` key is the paid
+ * feature, and the entitlement can only be checked by an action that can reach
+ * RevenueCat — so that path goes through `rentable.seatRented` and this one stays
+ * the free door. Without the refusal the gate would be decoration: the shelf
+ * hands the client the persona, and this mutation would have seated it.
+ */
 export const seatMask = mutation({
-  args: {
-    slug: v.string(),
-    memberKey: v.string(),
-    name: v.string(),
-    persona: v.string(),
-    avatarUrl: v.optional(v.string()),
+  args: seatArgs,
+  handler: async (ctx, args) => {
+    if (args.memberKey.startsWith(RENTED_PREFIX)) {
+      throw new Error('a rented mask is seated through rentable.seatRented, which verifies maskord_pro');
+    }
+    return await seat(ctx, args);
   },
-  handler: async (ctx, { slug, memberKey, name, persona, avatarUrl }) => {
-    const room = await getRoomBySlug(ctx, slug);
-    if (!room) throw new Error('no such room');
-    await joinMember(ctx, room._id, { memberKey, kind: 'mask', name, persona, avatarUrl });
-    await addToOrder(ctx, room._id, memberKey);
-    return { seated: true as const };
-  },
+});
+
+/** The same seating, reached only after `rentable.seatRented` has verified the entitlement. */
+export const seatMaskInternal = internalMutation({
+  args: seatArgs,
+  handler: async (ctx, args) => await seat(ctx, args),
 });
 
 export const unseatMask = mutation({

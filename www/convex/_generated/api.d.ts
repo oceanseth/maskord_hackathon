@@ -13,6 +13,7 @@ import type * as debate from "../debate.js";
 import type * as files from "../files.js";
 import type * as messages from "../messages.js";
 import type * as presence from "../presence.js";
+import type * as pro from "../pro.js";
 import type * as rentable from "../rentable.js";
 import type * as research from "../research.js";
 import type * as rooms from "../rooms.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   files: typeof files;
   messages: typeof messages;
   presence: typeof presence;
+  pro: typeof pro;
   rentable: typeof rentable;
   research: typeof research;
   rooms: typeof rooms;

@@ -69,6 +69,16 @@ export async function configurePurchases(uid: string | null): Promise<Purchases>
   return purchases;
 }
 
+/**
+ * The RevenueCat customer this browser is buying as — the Firebase uid once
+ * signed in, the stored anonymous id before that. The server needs exactly this
+ * string to verify an entitlement, and guessing it from the uid would refuse a
+ * guest their own purchase.
+ */
+export function currentAppUserId(): string | null {
+  return Purchases.isConfigured() ? Purchases.getSharedInstance().getAppUserId() : null;
+}
+
 export function isPro(info: CustomerInfo | null): boolean {
   return Boolean(info?.entitlements.active[MASKORD_PRO]);
 }
