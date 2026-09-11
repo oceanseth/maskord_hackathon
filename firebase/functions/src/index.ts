@@ -16,6 +16,7 @@ export {
 } from './claudeAgent';
 // ─── Inference bridge for the Convex game rooms ───────────────────────────────
 export { roomTurn } from './roomTurn';
+export { roomMessage } from './roomMessage';
 
 import { removeAvatarsInvitedBy } from './channelAvatars';
 import { forwardRoomEventToAgents } from './agentbox';
