@@ -76,8 +76,16 @@ export default function MainLayout() {
           </div>
         )}
 
+        {/* A gutter the handle owns. Without it the arrow is painted over the
+            channel header's first glyph — it still takes the click, but it
+            reads as a smudge on the icon. A column rather than padding on the
+            content pane, so the header keeps its full-width bottom border. */}
+        {hidden && <div className="w-8 flex-shrink-0" />}
+
         {/* The handle. Sits above everything so it stays reachable once the
-            columns it hides have slid away — otherwise collapsing is one-way. */}
+            columns it hides have slid away — otherwise collapsing is one-way.
+            Expanded, it lands in the guild rail's traffic-light spacer
+            (h-[46px]), which is why it clears the home button. */}
         {!isMobile && (
           <button
             onClick={() => setCollapsed((c) => !c)}
