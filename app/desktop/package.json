@@ -11,7 +11,9 @@
     "build": "tsc && vite build && electron-builder",
     "build:renderer": "vite build",
     "build:web": "vite build --config vite.web.config.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:rooms": "vite build --config vite.rooms.config.ts",
+    "dev:rooms": "vite --config vite.rooms.config.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

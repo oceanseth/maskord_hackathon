@@ -7,7 +7,7 @@
  * expects on maskord.com/app.
  */
 import { execSync } from 'node:child_process';
-import { cp, rm, stat } from 'node:fs/promises';
+import { cp, readdir, rename, rm, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
@@ -31,3 +31,25 @@ if (!(await stat(clientDist).catch(() => null))) {
 await rm(target, { recursive: true, force: true });
 await cp(clientDist, target, { recursive: true });
 console.log(`copied client build -> ${path.relative(repoRoot, target)}`);
+
+// The agent game rooms (/wizard.html, /wizardmap.html, /debate.html,
+// /debatestats.html) are their own bundle with base '/rooms/'. Each page is
+// published at the site root with its assets under /rooms/, so the client at
+// /app/ stays exactly what its own build produced.
+const roomsDist = path.join(repoRoot, 'app', 'desktop', 'dist-rooms');
+const roomsTarget = path.join(wwwDir, 'dist', 'rooms');
+
+console.log('building the rooms…');
+execSync('npm run build:rooms --workspace=app/desktop', {
+  cwd: repoRoot,
+  stdio: 'inherit',
+});
+
+await rm(roomsTarget, { recursive: true, force: true });
+await cp(roomsDist, roomsTarget, { recursive: true });
+const pages = (await readdir(roomsTarget)).filter((f) => f.endsWith('.html'));
+if (pages.length === 0) throw new Error(`rooms build produced no pages at ${roomsDist}`);
+for (const page of pages) {
+  await rename(path.join(roomsTarget, page), path.join(wwwDir, 'dist', page));
+}
+console.log(`copied rooms -> ${pages.map((p) => '/' + p).join(', ')}`);
