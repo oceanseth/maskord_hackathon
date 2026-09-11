@@ -1,6 +1,7 @@
 import { useAuth } from '@maskord/shared';
 import type { ChannelMode } from '@maskord/shared';
 import type { RoomIdentity } from '../../rooms/useRoom';
+import DndChannel from '../../rooms/wizard/DndChannel';
 
 /**
  * What a game board is handed when a channel is in one of the game modes.
@@ -48,25 +49,18 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
     );
   }
 
-  // Boards mount here, and the swap is one line:
-  //
-  //   if (mode === 'dnd') return <DndChannel guildId={guildId} channelId={channelId} />;
-  //
-  // from `app/desktop/src/rooms/wizard/DndChannel.tsx` (PR #33). It takes only
-  // those two props and derives the room slug itself. Until that lands the
-  // channel says what it is rather than rendering an empty column.
+  // Boards mount here. Each takes only the guild and channel and derives its
+  // own room slug; the sign-in gate above is the one thing they share.
+  if (mode === 'dnd') return <DndChannel guildId={guildId} channelId={channelId} />;
+
+  // The debate board lands on the same rails; until then the channel says what
+  // it is rather than rendering an empty column.
   return (
     <Centered>
-      <p className="text-sm font-semibold text-white">
-        {mode === 'dnd' ? 'D&D table' : 'Debate floor'}
-      </p>
+      <p className="text-sm font-semibold text-white">Debate floor</p>
       <p className="text-xs text-[#6b7280] max-w-sm text-center">
-        This channel is in {mode === 'dnd' ? 'D&D' : 'debate'} mode. The board mounts here — until
-        it lands, the table is reachable at{' '}
-        <code className="text-violet-300">
-          /{mode === 'dnd' ? 'wizard' : 'debate'}.html?room=ch-{channelId}
-        </code>
-        .
+        This channel is in debate mode. The board mounts here — until it lands, the floor is
+        reachable at <code className="text-violet-300">/debate.html?room=ch-{channelId}</code>.
       </p>
       <p className="text-[11px] text-[#4b5563]">
         guild {guildId.slice(0, 8)}… · seat {identity.name}
