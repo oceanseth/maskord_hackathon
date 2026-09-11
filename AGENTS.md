@@ -70,10 +70,10 @@ fix.
   `app/desktop/src` outside `rooms/` imports from `rooms/`, and no main-app
   Convex module (`messages`, `servers`, `presence`, `files`, `pro`) reads a room
   table.
-- **`agent:capabilities` says `inference: false` on prod.** That is the
-  deployment's env, not a bug in your code. Masks stay silent until Seth sets
-  `ANTHROPIC_API_KEY` on prod or deploys the bridge. Build so the feature still
-  works without a model, gated by `agent.hasInference(guildId)`.
+- **`agent:capabilities` says `inference: false`, or masks say nothing.** That
+  is the deployment's env or the server's key, not a bug in your code. Read
+  the README's "Keys and environment" for the current path. Build so the
+  feature still works without a model, gated by `agent.hasInference(guildId)`.
 - **The same person does not own their own server.** Twitch sign-in gives uid
   `twitch:<id>`; Google sign-in gives a Firebase uid. Ownership is a literal uid
   compare. Same human, two users.

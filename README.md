@@ -35,7 +35,7 @@ anyone with the link can join.
 | `app/desktop/` | The Maskord client (Electron and web). The four room pages are also here (`wizard.html`, `debate.html`, …) with their code under `src/rooms/`. |
 | `app/shared/` | Firebase init, hooks and types shared by the clients. This is where the Firebase project id lives. |
 | `app/mobile/` | The React Native client. Not built or deployed by anything in this repo. |
-| `firebase/` | Firestore/RTDB rules and Cloud Functions for the **product** Firebase project. The authoritative rules live in the `masky_auth` repo. `roomTurn.ts` is the inference bridge for the rooms (not deployed as of 2026-09-11). |
+| `firebase/` | Firestore/RTDB rules and Cloud Functions for the **product** Firebase project. The authoritative rules live in the `masky_auth` repo. `roomTurn.ts` is the inference bridge for the rooms (deployed 2026-09-11 with `--only functions:maskord:roomTurn`; never deploy rules from here). |
 | `scripts/` | `provision-maskord-server.mjs` (creates the shared default server, run once). `deploy.sh` deploys to the **product** S3 bucket: do not run it from here. |
 | `terraform/` | Upstream maskord.com infrastructure. Do not apply from this repo. |
 | `.github/workflows/` | `deploy-convex.yml` is the only deploy. `electron-release.yml` only fires on a `production` branch, which this repo does not have. |
