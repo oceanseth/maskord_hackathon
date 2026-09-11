@@ -28,6 +28,49 @@ wear whatever mask you like when interacting with others.
 | `firebase/` | Firestore/RTDB rules and Cloud Functions. Note that the authoritative rules live in the `masky_auth` repo. |
 | `terraform/` | Upstream maskord.com infrastructure. Do not apply from this repo. |
 
+## Voice transcript (speech-to-text)
+
+Voice channels with AI assistance transcribe each speaker's microphone in
+their own client with [AssemblyAI Universal-Streaming](https://www.assemblyai.com/docs/streaming),
+and write finished utterances to the channel transcript in Firestore. The
+browser never sees the account key: the `getSttToken` Cloud Function mints a
+single-use temporary token per session.
+
+Set the key once per Firebase project, then deploy that one function:
+
+```bash
+cd firebase
+firebase functions:secrets:set ASSEMBLYAI_API_KEY
+firebase deploy --only functions:getSttToken
+```
+
+Until the secret is set the clients fall back to the browser's Web Speech
+API, which works in Chrome and Safari but not in the Electron build.
+Streaming is billed per hour the socket is open, so the client only holds a
+session while the user is connected, unmuted, and either the transcript or
+avatar voice mode wants it.
+
+### Testing it: /stt.html
+
+`app/desktop/src/stt/` is a standalone harness, published at `/stt.html`, that
+drives the same hook against the same callable under the same CSP as the app —
+but with no guild, no channel, no second person and no Firestore writes. Sign
+in, open the mic, talk, and watch the formatted turns land, with the token
+call, the keyterms and the push-to-talk gate all visible on the page.
+
+It is built and published separately from the client (`base: '/stt/'`, so its
+assets never mix with `/app/`'s), which means it can be published alongside a
+client build it is not part of — how a change to the voice path gets tested
+before it becomes the client everyone loads.
+
+```bash
+npm run dev:stt --workspace=app/desktop   # http://localhost:5173/stt/stt.html
+```
+
+Note the `blob:` in `index.html`'s `script-src`: worklet modules are fetched as
+scripts, and the STT downsampler is registered from a blob URL. Without it
+`addModule` throws and STT silently drops to Web Speech.
+
 ## Deploying
 
 Push to `main`. Anything touching `www/` publishes to the prod Convex

@@ -23,6 +23,55 @@ async function displayNameFor(uid: string): Promise<string> {
   return (d?.displayName ?? d?.twitchUsername ?? uid.slice(0, 8)) as string;
 }
 
+// ─── AssemblyAI streaming STT ─────────────────────────────────────────────────
+//
+// The clients transcribe voice channels with AssemblyAI Universal-Streaming
+// straight from the browser. The account key must not ship in the bundle, so
+// each session starts by asking us for a short-lived token, the same way
+// getTurnCredentials hands out TURN credentials. The token is single-use and
+// can only be redeemed for a minute; the session it opens may last three hours.
+//
+// Set the secret once per project:  firebase functions:secrets:set ASSEMBLYAI_API_KEY
+// Until it is set the callable answers failed-precondition and the clients
+// fall back to the browser's own Web Speech API.
+
+const assemblyAiApiKey = defineSecret('ASSEMBLYAI_API_KEY');
+
+const ASSEMBLYAI_TOKEN_URL = 'https://streaming.assemblyai.com/v3/token';
+/** Token redemption window. The client connects immediately, so keep it short. */
+const STT_TOKEN_TTL_SECONDS = 60;
+/** Longest a single streaming session may run before AssemblyAI ends it (API max). */
+const STT_MAX_SESSION_SECONDS = 3 * 60 * 60;
+
+export const getSttToken = onCall({ secrets: [assemblyAiApiKey] }, async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+  const apiKey = assemblyAiApiKey.value().trim();
+  if (!apiKey) {
+    throw new HttpsError('failed-precondition', 'AssemblyAI STT is not configured');
+  }
+
+  const url = `${ASSEMBLYAI_TOKEN_URL}?expires_in_seconds=${STT_TOKEN_TTL_SECONDS}`
+    + `&max_session_duration_seconds=${STT_MAX_SESSION_SECONDS}`;
+  let res: Response;
+  try {
+    // Streaming STT takes the raw key in Authorization — no "Bearer" prefix.
+    res = await fetch(url, { headers: { Authorization: apiKey } });
+  } catch (e) {
+    console.warn('[getSttToken] token request failed:', e);
+    throw new HttpsError('unavailable', 'Could not reach AssemblyAI');
+  }
+  if (!res.ok) {
+    console.warn('[getSttToken] AssemblyAI returned', res.status, await res.text());
+    throw new HttpsError(res.status === 401 ? 'failed-precondition' : 'unavailable',
+      `AssemblyAI token request failed (${res.status})`);
+  }
+
+  const data = await res.json() as { token?: string; expires_in_seconds?: number };
+  if (!data.token) throw new HttpsError('internal', 'AssemblyAI returned no token');
+  return { token: data.token, expiresInSeconds: data.expires_in_seconds ?? STT_TOKEN_TTL_SECONDS };
+});
+
 // ─── Twitch OAuth ─────────────────────────────────────────────────────────────
 
 const twitchClientSecret = defineSecret('TWITCH_CLIENT_SECRET');

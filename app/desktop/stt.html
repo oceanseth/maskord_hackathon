@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Maskord — STT harness</title>
+    <meta name="robots" content="noindex" />
+    <!-- Deliberately the same policy as index.html: the point of this page is to
+         exercise the STT path under the app's real CSP, which is where the
+         AudioWorklet blob URL has to be allowed. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' https: wss:; script-src 'self' 'unsafe-inline' blob: https://*.firebaseio.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https:;" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/stt/main.tsx"></script>
+  </body>
+</html>
