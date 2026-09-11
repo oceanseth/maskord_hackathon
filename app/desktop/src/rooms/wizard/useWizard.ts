@@ -37,7 +37,6 @@ export function useWizard(room: RoomHandle) {
   const act = useMutation(api.wizard.act);
   const setPaused = useMutation(api.wizard.setPaused);
   const askDm = useMutation(api.wizard.askDm);
-  const kick = useMutation(api.wizard.kick);
   const walkUp = useMutation(api.wizard.walkUp);
   const check = useMutation(api.wizard.check);
   const shortRest = useMutation(api.wizard.shortRest);
@@ -94,7 +93,6 @@ export function useWizard(room: RoomHandle) {
     pause: (reason?: string) => withRoom((roomId, memberKey) => setPaused({ roomId, memberKey, paused: true, reason })),
     resume: () => withRoom((roomId, memberKey) => setPaused({ roomId, memberKey, paused: false })),
     askDm: (text: string) => withRoom((roomId, memberKey) => askDm({ roomId, memberKey, text })),
-    kick: () => withRoom((roomId) => kick({ roomId })),
     walkUp: () => withRoom((roomId, memberKey) => walkUp({ roomId, memberKey })),
     check: (skill: string, about?: string) => withRoom((roomId, memberKey) => check({ roomId, memberKey, skill, about })),
     shortRest: () => withRoom((roomId, memberKey) => shortRest({ roomId, memberKey })),

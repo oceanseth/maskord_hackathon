@@ -1,7 +1,7 @@
 import { v } from 'convex/values';
 import { internalMutation, mutation, query } from './_generated/server';
 import type { MutationCtx, QueryCtx } from './_generated/server';
-import { api, internal } from './_generated/api';
+import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent, joinMember } from './rooms';
 import { hasInference } from './agent';
@@ -63,6 +63,10 @@ type TurnState = { moved: number; actionUsed: boolean; bonusUsed: boolean; dashe
 const MASK_TURN_DELAY_MS = 900;
 const MONSTER_TURN_DELAY_MS = 1400;
 const ZOMBIES_RISE_AFTER_MS = 9000;
+/** One DM answer per room per this window; each answer is a model call. */
+const ASK_DM_COOLDOWN_MS = 15_000;
+/** The research branch runs up to three searches and three assessments, so it is rarer. */
+const RESEARCH_COOLDOWN_MS = 60_000;
 
 const rng: Rng = () => Math.random();
 
@@ -546,8 +550,13 @@ async function checkEnd(ctx: MutationCtx, room: Doc<'rooms'>, game: Game): Promi
   return false;
 }
 
-/** Re-issue the current turn's scheduled work (after a resume, or a lost job). */
-export const kick = mutation({
+/**
+ * Re-issue the current turn's scheduled work (after a resume). Internal on
+ * purpose: every call can schedule a mask turn, and the turnToken guard does
+ * not stop repeats within the same turn, so a public entry point would let
+ * anyone with a roomId pay for model calls in a loop.
+ */
+export const kick = internalMutation({
   args: { roomId: v.id('rooms') },
   handler: async (ctx, { roomId }) => {
     const { room, game } = await roomAndGame(ctx, roomId);
@@ -586,7 +595,7 @@ export const setPaused = mutation({
       await appendEvent(ctx, roomId, { type: 'system', actorKey: memberKey, actorName: name, body: `${name} resumed the game.`, data: { kind: 'status', status: 'running' } });
       const who = active(game);
       if (game.phase === 'combat' && who) await host(ctx, room, `Back to it. ${who.name} was up.`);
-      await ctx.scheduler.runAfter(0, api.wizard.kick, { roomId });
+      await ctx.scheduler.runAfter(0, internal.wizard.kick, { roomId });
     }
   },
 });
@@ -1296,9 +1305,19 @@ export const askDm = mutation({
     await appendEvent(ctx, roomId, { type: 'say', actorKey: memberKey, actorName: member.name, body: text.trim().slice(0, 1000) });
     if (/\b(pause|hold on|wait|one sec|character sheet)\b/i.test(text) && room.status === 'running') {
       await ctx.scheduler.runAfter(0, internal.wizard.setPausedInternal, { roomId, memberKey, reason: 'asked to pause' });
-      return;
+      return { answered: false as const, reason: 'paused' as const };
     }
-    const asksForSources = /\?/.test(text) && /\b(really|actually|can|does|would|is it true|rules?|how (?:does|do)|source|look (?:it )?up|research)\b/i.test(text);
+    // The message is always recorded; what is rationed is the spend behind the
+    // answer. A member (guests included) holding the send key must not turn
+    // into a stream of model calls on the server's key.
+    const cfg = (room.config ?? {}) as { lastAskDmAt?: number; lastResearchAt?: number };
+    const now = Date.now();
+    if (now - (cfg.lastAskDmAt ?? 0) < ASK_DM_COOLDOWN_MS) {
+      return { answered: false as const, reason: 'cooldown' as const };
+    }
+    const wantsSources = /\?/.test(text) && /\b(really|actually|can|does|would|is it true|rules?|how (?:does|do)|source|look (?:it )?up|research)\b/i.test(text);
+    const asksForSources = wantsSources && now - (cfg.lastResearchAt ?? 0) >= RESEARCH_COOLDOWN_MS;
+    await ctx.db.patch(roomId, { config: { ...(room.config ?? {}), lastAskDmAt: now, ...(asksForSources ? { lastResearchAt: now } : {}) } });
     if (asksForSources) {
       await ctx.scheduler.runAfter(0, internal.research.investigate, {
         roomId,
@@ -1311,6 +1330,7 @@ export const askDm = mutation({
       roomId,
       beat: `${member.name} just said: "${text.trim().slice(0, 500)}". Answer them as the DM in one to three sentences. If it is a rules question, answer accurately for 5e 2014${asksForSources ? ' and say the table is looking it up (research results will be posted to the room)' : ''}. If they are describing an action in combat, tell them to use the action controls (the engine resolves actions) but react to their intent in character.`,
     });
+    return { answered: true as const };
   },
 });
 
