@@ -73,6 +73,8 @@ export type DebateConfig = {
     winner: string;
     summary: string;
     scores: Array<{ memberKey: string; name: string; total: number; byCriterion: Record<string, number>; note: string }>;
+    /** What the judging call cost — model, wall-clock, tokens. See `nebius.ts`. */
+    measurement?: NebiusMeasurement;
   };
 };
 

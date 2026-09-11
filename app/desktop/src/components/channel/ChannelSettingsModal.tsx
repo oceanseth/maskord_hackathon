@@ -83,6 +83,7 @@ function OverviewTab({ guildId, channel }: { guildId: string; channel: Channel }
             className="w-full px-3 py-2 rounded-lg bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none disabled:opacity-50"
           >
             <option value="default">Default</option>
+            <option value="debate">Debate floor</option>
             <option value="dnd">D&amp;D table</option>
           </select>
           <p className="text-xs text-[#6b7280]">
