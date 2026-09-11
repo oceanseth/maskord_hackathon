@@ -8,9 +8,11 @@
  * @module
  */
 
+import type * as agent from "../agent.js";
 import type * as files from "../files.js";
 import type * as messages from "../messages.js";
 import type * as presence from "../presence.js";
+import type * as research from "../research.js";
 import type * as rooms from "../rooms.js";
 import type * as servers from "../servers.js";
 
@@ -21,9 +23,11 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  agent: typeof agent;
   files: typeof files;
   messages: typeof messages;
   presence: typeof presence;
+  research: typeof research;
   rooms: typeof rooms;
   servers: typeof servers;
 }>;
