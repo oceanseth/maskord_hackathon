@@ -17,10 +17,13 @@ export function RoomShell({
   render,
   side = 'right',
   width = 'w-[440px]',
+  panelClassName = '',
 }: {
   render: (identity: RoomIdentity) => ReactNode;
   side?: 'left' | 'right';
   width?: string;
+  /** Extra classes on the room column (a theme scope, for instance). */
+  panelClassName?: string;
 }) {
   const { firebaseUser, profile } = useAuth();
   const identity: RoomIdentity | null =
@@ -29,7 +32,7 @@ export function RoomShell({
       : null;
 
   const panel = identity ? (
-    <aside className={`${width} shrink-0 border-[#1f1f2e] ${side === 'right' ? 'border-l' : 'border-r'} flex flex-col min-h-0 bg-[#0c0c14]`}>
+    <aside className={`${width} ${panelClassName} shrink-0 border-[#1f1f2e] ${side === 'right' ? 'border-l' : 'border-r'} flex flex-col min-h-0 bg-[#0c0c14]`}>
       {render(identity)}
     </aside>
   ) : null;

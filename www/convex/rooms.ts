@@ -225,6 +225,70 @@ export const members = query({
  * runner registers masks with it once. `memberKey` is whatever identifies the
  * member across tabs: a Firebase uid for humans, a mask id for masks.
  */
+export interface JoinArgs {
+  memberKey: string;
+  kind: Doc<'roomMembers'>['kind'];
+  name: string;
+  avatarUrl?: string;
+  persona?: string;
+}
+
+/** Shared by `join` and the kind-specific modules that seat masks. */
+export async function joinMember(ctx: MutationCtx, roomId: Id<'rooms'>, { memberKey, kind, name, avatarUrl, persona }: JoinArgs) {
+  const existing = await ctx.db
+    .query('roomMembers')
+    .withIndex('by_room_member', (q) => q.eq('roomId', roomId).eq('memberKey', memberKey))
+    .unique();
+
+  const now = Date.now();
+  if (existing) {
+    const wasAway = kind === 'human' && existing.lastSeen < now - MEMBER_TIMEOUT_MS;
+    await ctx.db.patch(existing._id, {
+      name: name.slice(0, MAX_NAME),
+      avatarUrl: avatarUrl ?? existing.avatarUrl,
+      persona: persona ?? existing.persona,
+      lastSeen: now,
+    });
+    if (wasAway) {
+      await appendEvent(ctx, roomId, {
+        type: 'system',
+        actorKey: memberKey,
+        actorName: name,
+        body: `${name} is back.`,
+        data: { kind: 'rejoin' },
+      });
+    }
+    return existing._id;
+  }
+
+  const id = await ctx.db.insert('roomMembers', {
+    roomId,
+    memberKey,
+    kind,
+    name: name.slice(0, MAX_NAME),
+    avatarUrl,
+    persona,
+    ready: kind !== 'human',
+    lastSeen: now,
+    state: {},
+  });
+
+  await appendEvent(ctx, roomId, {
+    type: 'system',
+    actorKey: memberKey,
+    actorName: name,
+    body: `${name} joined${kind === 'mask' ? ' (mask)' : ''}.`,
+    data: { kind: 'join', memberKind: kind },
+  });
+
+  return id;
+}
+
+/**
+ * Join, or check in. Humans call this on load and then on a heartbeat; the
+ * runner registers masks with it once. `memberKey` is whatever identifies the
+ * member across tabs: a Firebase uid for humans, a mask id for masks.
+ */
 export const join = mutation({
   args: {
     roomId: v.id('rooms'),
@@ -234,55 +298,7 @@ export const join = mutation({
     avatarUrl: v.optional(v.string()),
     persona: v.optional(v.string()),
   },
-  handler: async (ctx, { roomId, memberKey, kind, name, avatarUrl, persona }) => {
-    const existing = await ctx.db
-      .query('roomMembers')
-      .withIndex('by_room_member', (q) => q.eq('roomId', roomId).eq('memberKey', memberKey))
-      .unique();
-
-    const now = Date.now();
-    if (existing) {
-      const wasAway = kind === 'human' && existing.lastSeen < now - MEMBER_TIMEOUT_MS;
-      await ctx.db.patch(existing._id, {
-        name: name.slice(0, MAX_NAME),
-        avatarUrl: avatarUrl ?? existing.avatarUrl,
-        persona: persona ?? existing.persona,
-        lastSeen: now,
-      });
-      if (wasAway) {
-        await appendEvent(ctx, roomId, {
-          type: 'system',
-          actorKey: memberKey,
-          actorName: name,
-          body: `${name} is back.`,
-          data: { kind: 'rejoin' },
-        });
-      }
-      return existing._id;
-    }
-
-    const id = await ctx.db.insert('roomMembers', {
-      roomId,
-      memberKey,
-      kind,
-      name: name.slice(0, MAX_NAME),
-      avatarUrl,
-      persona,
-      ready: kind !== 'human',
-      lastSeen: now,
-      state: {},
-    });
-
-    await appendEvent(ctx, roomId, {
-      type: 'system',
-      actorKey: memberKey,
-      actorName: name,
-      body: `${name} joined${kind === 'mask' ? ' (mask)' : ''}.`,
-      data: { kind: 'join', memberKind: kind },
-    });
-
-    return id;
-  },
+  handler: async (ctx, { roomId, ...args }) => await joinMember(ctx, roomId, args),
 });
 
 export const heartbeat = mutation({

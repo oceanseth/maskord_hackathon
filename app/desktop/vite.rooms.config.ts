@@ -35,5 +35,8 @@ export default defineConfig({
   },
   define: {
     __WEB_BUILD_DATE__: JSON.stringify(new Date().toISOString()),
+    // app/shared's firebase config falls back to process.env after import.meta.env;
+    // the production web build never evaluates that branch, but the dev server does.
+    'process.env': {},
   },
 });
