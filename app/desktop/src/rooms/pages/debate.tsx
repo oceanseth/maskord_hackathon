@@ -4,6 +4,7 @@ import { api } from '@maskord/convex';
 import { RoomShell, mountRoomPage } from '../RoomShell';
 import { RoomPanel } from '../RoomPanel';
 import { useRoom, type RoomEvent, type RoomIdentity } from '../useRoom';
+import { useMaskyAvatars } from '../../hooks/useMaskyAvatars';
 
 /**
  * The debate table. Masks argue the motion in character, fact-check each other
@@ -15,7 +16,14 @@ import { useRoom, type RoomEvent, type RoomIdentity } from '../useRoom';
  * /debatestats.html be a pure reader.
  */
 
-/** How often a running room asks for the next turn. Slow enough to read. */
+/**
+ * How often a tab asks the room for the next turn.
+ *
+ * The real pace is the server's, not this: `debate.takeTurn` holds a turn lease
+ * for `TURN_CLAIM_TTL_MS` (20s) and drops ticks that arrive while it is held, so
+ * turns land about every 20 seconds however many tabs are open. Measured, not
+ * assumed — five `advance` calls in a row produced two turns, not five.
+ */
 const ADVANCE_MS = 12_000;
 
 function DebateRoom({ identity }: { identity: RoomIdentity }) {
@@ -26,6 +34,14 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
   const start = useAction(api.debate.start);
   const advance = useMutation(api.debate.advance);
   const factCheck = useMutation(api.debate.factCheck);
+  const seatMask = useMutation(api.debate.seatMask);
+  const unseatMask = useMutation(api.debate.unseatMask);
+  const seatHouseCast = useMutation(api.debate.seatHouseCast);
+
+  // Your own masks, so the panel is your characters rather than ours. Same
+  // source the Maskord client uses for its AI assistance tab.
+  const { avatarGroups } = useMaskyAvatars(identity.key);
+  const seated = new Set(room.masks.map((m) => m.memberKey));
 
   const [topic, setTopic] = useState('');
   const [claim, setClaim] = useState('');
@@ -92,6 +108,49 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
               <div className="text-sm text-[#94a3b8]">
                 No motion yet. Leave it blank and the host will write one for tonight's panel.
               </div>
+              {/* Who is on the floor. Empty means `start` seats the house panel,
+                  so the button always produces a debate. */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-[#6b7280] mr-1">Panel</span>
+                {room.masks.map((m) => (
+                  <button
+                    key={m.memberKey}
+                    onClick={() => unseatMask({ slug: room.slug, memberKey: m.memberKey })}
+                    title="Remove from the panel"
+                    className="text-[11px] px-2 py-0.5 rounded-full bg-[#1e1e2e] border border-[#2a2a3e] hover:border-red-700/60 text-[#cbd5e1]"
+                  >
+                    {m.name} ×
+                  </button>
+                ))}
+                {room.masks.length === 0 && (
+                  <button
+                    onClick={() => seatHouseCast({ slug: room.slug })}
+                    className="text-[11px] px-2 py-0.5 rounded-full bg-[#1e1e2e] border border-[#2a2a3e] hover:border-violet-700/60 text-[#94a3b8]"
+                  >
+                    Seat the house panel
+                  </button>
+                )}
+                {avatarGroups
+                  .filter((g) => !seated.has(`mask:${g.id}`))
+                  .map((g) => (
+                    <button
+                      key={g.id}
+                      onClick={() =>
+                        seatMask({
+                          slug: room.slug,
+                          memberKey: `mask:${g.id}`,
+                          name: g.displayName,
+                          persona: g.personalityPrompt ?? '',
+                          avatarUrl: g.thumbnailUrl,
+                        })
+                      }
+                      className="text-[11px] px-2 py-0.5 rounded-full bg-fuchsia-900/40 border border-fuchsia-700/50 hover:bg-fuchsia-800/50 text-fuchsia-100"
+                    >
+                      + {g.displayName}
+                    </button>
+                  ))}
+              </div>
+
               <div className="flex gap-2">
                 <input
                   value={topic}
