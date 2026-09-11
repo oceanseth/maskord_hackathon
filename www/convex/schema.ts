@@ -118,4 +118,44 @@ export default defineSchema({
     body: v.string(),
     data: v.optional(v.any()),
   }).index('by_room_seq', ['roomId', 'seq']),
+
+  // One row per *iteration* of a research loop, not one per question. The loop
+  // has to be iterative to count: each pass records what it learned and what it
+  // still does not know, and `nextQuery` — chosen from those gaps — is what the
+  // following pass searches for. Keeping every pass means the room can show how
+  // a conclusion was reached, and the stop reason stays auditable.
+  research: defineTable({
+    roomId: v.id('rooms'),
+    /** The claim under investigation, verbatim from whoever contested it. */
+    claim: v.string(),
+    /** A mask's display name, or 'room' for a between-turns background check. */
+    askedBy: v.string(),
+    /** 0-based; iteration 0 searches the claim itself. */
+    iteration: v.number(),
+    /** What this pass actually searched for. */
+    query: v.string(),
+    sources: v.array(
+      v.object({ title: v.string(), url: v.string(), snippet: v.string() }),
+    ),
+    /** What this pass concluded, in a sentence or two. */
+    finding: v.string(),
+    /** 0..1, drives the stop condition. */
+    confidence: v.number(),
+    /** What is still unknown. Empty means nothing left to chase. */
+    gaps: v.array(v.string()),
+    /** Chosen from `gaps`; null when the loop stopped here. */
+    nextQuery: v.union(v.string(), v.null()),
+    /** Set only on the final iteration of a claim. */
+    stopReason: v.optional(
+      v.union(
+        v.literal('confident'),
+        v.literal('no-gaps'),
+        v.literal('max-iterations'),
+        v.literal('error'),
+      ),
+    ),
+    provider: v.string(),
+  })
+    .index('by_room', ['roomId'])
+    .index('by_room_claim', ['roomId', 'claim', 'iteration']),
 });
