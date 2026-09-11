@@ -1,5 +1,6 @@
 import { v } from 'convex/values';
-import { mutation, query } from './_generated/server';
+import { internalAction, mutation, query } from './_generated/server';
+import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 
@@ -61,6 +62,60 @@ async function nextSeq(ctx: MutationCtx, roomId: Id<'rooms'>) {
  * Append to a room's log. Exported for the kind-specific modules (the D&D
  * engine, the debate moderator) so every event goes through one place.
  */
+/**
+ * A room bound to a channel names it in its slug — `<kind>:ch-<channelId>` — so
+ * the binding survives anything the client forgets to pass. Rooms opened from
+ * `/wizard.html?room=friday` have no channel and mirror nowhere.
+ */
+function boundChannelId(slug: string): string | null {
+  const match = /^(?:wizard|debate):ch-(.+)$/.exec(slug);
+  return match ? match[1] : null;
+}
+
+/** Lines a person would expect to see in the channel. Dice and joins stay on the board. */
+const MIRRORED: ReadonlyArray<Doc<'roomEvents'>['type']> = ['say', 'action', 'host', 'research'];
+
+/**
+ * Post a room line into the channel it is bound to, through the same Firebase
+ * bridge `agent.ts` uses for inference.
+ *
+ * Writing as a mask needs admin credentials — the mask has no account — so it
+ * cannot happen here or in the browser. Failure is swallowed on purpose: a room
+ * whose turns stop because Firestore hiccuped is worse than a line missing from
+ * history, and the board still has every event either way.
+ */
+export const mirrorToChannel = internalAction({
+  args: {
+    guildId: v.string(),
+    channelId: v.string(),
+    speakerKey: v.string(),
+    speakerName: v.string(),
+    speakerAvatarUrl: v.optional(v.string()),
+    content: v.string(),
+  },
+  handler: async (_ctx, args) => {
+    const url = process.env.ROOM_BRIDGE_MESSAGE_URL;
+    const secret = process.env.ROOM_BRIDGE_SECRET;
+    if (!url || !secret) return { posted: false as const, reason: 'not-configured' as const };
+
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-room-bridge-secret': secret },
+        body: JSON.stringify(args),
+      });
+      if (!res.ok) {
+        console.error(`roomMessage ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        return { posted: false as const, reason: 'rejected' as const };
+      }
+      return { posted: true as const };
+    } catch (err) {
+      console.error('roomMessage unreachable', err);
+      return { posted: false as const, reason: 'unreachable' as const };
+    }
+  },
+});
+
 export async function appendEvent(
   ctx: MutationCtx,
   roomId: Id<'rooms'>,
@@ -73,7 +128,7 @@ export async function appendEvent(
   },
 ) {
   const seq = await nextSeq(ctx, roomId);
-  return await ctx.db.insert('roomEvents', {
+  const id = await ctx.db.insert('roomEvents', {
     roomId,
     seq,
     type: event.type,
@@ -82,6 +137,36 @@ export async function appendEvent(
     body: event.body.slice(0, MAX_BODY),
     data: event.data,
   });
+
+  // Mirror into the channel, if this room is one. Done here rather than at each
+  // call site because this is already the one place every event passes through —
+  // which is what stops the debate and the table drifting apart on it.
+  const room = await ctx.db.get(roomId);
+  const channelId = room ? boundChannelId(room.slug) : null;
+  const guildId = (room?.config as { guildId?: string } | undefined)?.guildId;
+  if (room && channelId && guildId && MIRRORED.includes(event.type) && event.body.trim()) {
+    const member = event.actorKey
+      ? await ctx.db
+          .query('roomMembers')
+          .withIndex('by_room_member', (q) => q.eq('roomId', roomId).eq('memberKey', event.actorKey!))
+          .unique()
+      : null;
+
+    // Never mirror a human: their words arrived *from* the channel, and posting
+    // them back would show every player their own message twice.
+    if (member?.kind !== 'human') {
+      await ctx.scheduler.runAfter(0, internal.rooms.mirrorToChannel, {
+        guildId,
+        channelId,
+        speakerKey: event.actorKey ?? 'host',
+        speakerName: event.actorName.slice(0, MAX_NAME),
+        speakerAvatarUrl: member?.avatarUrl,
+        content: event.body.slice(0, MAX_BODY),
+      });
+    }
+  }
+
+  return id;
 }
 
 // ---------------------------------------------------------------------------
