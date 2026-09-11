@@ -3,7 +3,9 @@ import { internalMutation, mutation, query } from './_generated/server';
 import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
-import { appendEvent, joinMember } from './rooms';
+import { appendEvent, joinMember, setPhase } from './rooms';
+import { skillFor } from './skills';
+import { CAMPAIGNS, type Campaign } from './wizard/campaigns';
 import { hasInference } from './agent';
 import { hasResearch } from './research';
 import { PREGENS, SHEET_KEYS } from './wizard/pregens';
@@ -39,7 +41,7 @@ import {
   sheetOf,
   type Rng,
 } from './wizard/engine';
-import { feet, mod, SKILLS, type Attack, type CharacterState, type Combatant, type CreatureState, type Fire, type Phase, type Position, type SheetKey, type Skill } from './wizard/types';
+import { dndPhase, feet, mod, SKILLS, type Attack, type CharacterState, type Combatant, type CreatureState, type DndPhase, type Fire, type Phase, type Position, type SheetKey, type Skill } from './wizard/types';
 
 /**
  * The D&D table. One `wizardGames` row per wizard room holds the whole scene:
@@ -82,6 +84,28 @@ function canResearch(room: Doc<'rooms'>): boolean {
 }
 
 const rng: Rng = () => Math.random();
+
+type RoomCfg = { guildId?: string; startedBy?: string; campaign?: string; lastAskDmAt?: number; lastResearchAt?: number };
+function cfg(room: Doc<'rooms'>): RoomCfg {
+  return (room.config ?? {}) as RoomCfg;
+}
+
+/**
+ * The channel's phase: `ruleset -> characters -> play -> resolve`. Stored on
+ * the room by `setPhase`; derived from the engine for tables older than that.
+ */
+function phaseOf(room: Doc<'rooms'>, game?: Game | null): DndPhase {
+  return dndPhase(room.phase, game?.phase as Phase | undefined);
+}
+
+function campaignOf(room: Doc<'rooms'>): Campaign | null {
+  const id = cfg(room).campaign;
+  return id ? CAMPAIGNS[id] ?? null : null;
+}
+
+function rosterOf(game: Game | null | undefined): string {
+  return ((game?.characters ?? []) as CharacterState[]).map((c) => `${c.name} the ${PREGENS[c.sheetKey].race} ${PREGENS[c.sheetKey].className}`).join(', ');
+}
 
 // ---------------------------------------------------------------------------
 // Reads
@@ -324,7 +348,9 @@ export const start = mutation({
   args: { roomId: v.id('rooms'), byKey: v.string(), guildId: v.optional(v.string()) },
   handler: async (ctx, { roomId, byKey, guildId }) => {
     const { room, game } = await roomAndGame(ctx, roomId);
-    if (game.phase !== 'lobby') throw new Error('Already started');
+    const phase = phaseOf(room, game);
+    if (phase === 'ruleset') throw new Error('Choose a campaign first');
+    if (phase !== 'characters' || game.phase !== 'lobby') throw new Error('Already started');
     // The server the starter has open pays for the masks' thinking, through the
     // bridge in firebase/functions (see agent.roomCredentials).
     if (guildId) await ctx.db.patch(roomId, { config: { ...(room.config ?? {}), guildId, startedBy: byKey } });
@@ -357,6 +383,7 @@ export const start = mutation({
 
     const starter = members.find((m) => m.memberKey === byKey)?.name ?? 'the table';
     await system(ctx, room, `${starter} started the game. Unclaimed sheets are put away.`, { kind: 'status', status: 'running' });
+    await setPhase(ctx, roomId, 'play', { byKey, byName: starter });
     const roster = characters.map((c) => `${c.name} the ${PREGENS[c.sheetKey].race} ${PREGENS[c.sheetKey].className}`).join(', ');
     await host(
       ctx,
@@ -371,6 +398,155 @@ export const start = mutation({
       beat: 'The party has just landed on the beach at the north harbor. Set the scene in two or three sentences, in your own DM voice, then ask what they do. Do not introduce enemies yet.',
     });
     await ctx.scheduler.runAfter(ZOMBIES_RISE_AFTER_MS, internal.wizard.zombiesRise, { roomId });
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Channel phases: ruleset -> characters -> play -> resolve
+//
+// `start` (above) is the characters -> play edge and `checkEnd` the defeat ->
+// resolve one; the rest are here. Each changes the room's phase through
+// `rooms.setPhase`, so the transcript records every move.
+
+async function chooseCampaign(ctx: MutationCtx, room: Doc<'rooms'>, game: Game, campaignId: string, by: { byKey?: string; byName: string }, announce: boolean) {
+  if (phaseOf(room, game) !== 'ruleset') throw new Error('The campaign is already chosen');
+  const campaign = CAMPAIGNS[campaignId];
+  if (!campaign) throw new Error('No such campaign');
+  await ctx.db.patch(room._id, { config: { ...(room.config ?? {}), campaign: campaign.id } });
+  if (game.mapKey !== campaign.mapKey) {
+    game.mapKey = campaign.mapKey;
+    await save(ctx, game);
+  }
+  await system(ctx, room, `${by.byName} chose ${campaign.title} (${campaign.ruleset}).`, { kind: 'campaign', campaign: campaign.id });
+  await setPhase(ctx, room._id, 'characters', by);
+  // The host already spoke when the choice came from its own tool call.
+  if (announce) {
+    await ctx.scheduler.runAfter(0, internal.wizard.narrate, {
+      roomId: room._id,
+      beat: `The table just chose ${campaign.title}. In two sentences, welcome them to it and tell them to pick a character sheet from the fan on the right and confirm it.`,
+    });
+  }
+}
+
+/** A person picks the campaign from the catalogue (ruleset -> characters). */
+export const pickCampaign = mutation({
+  args: { roomId: v.id('rooms'), memberKey: v.string(), campaignId: v.string() },
+  handler: async (ctx, { roomId, memberKey, campaignId }) => {
+    const { room, game } = await roomAndGame(ctx, roomId);
+    const member = await memberOf(ctx, roomId, memberKey);
+    if (!member || member.kind !== 'human') throw new Error('Not at the table');
+    await chooseCampaign(ctx, room, game, campaignId, { byKey: memberKey, byName: member.name }, true);
+  },
+});
+
+const CHOOSE_CAMPAIGN_TOOL = {
+  name: 'choose_campaign',
+  description: 'Choose the campaign the table will play. Call this once a person has named one or clearly agreed to the one on offer.',
+  input_schema: {
+    type: 'object',
+    properties: { campaign: { type: 'string', description: 'The campaign id from the catalogue in State.' } },
+    required: ['campaign'],
+  },
+};
+
+/** The host's tool calls outside combat: today only `choose_campaign`, in the ruleset phase. */
+export const onPhaseTool = internalMutation({
+  args: { roomId: v.id('rooms'), memberKey: v.string(), turnToken: v.optional(v.number()), call: v.any() },
+  handler: async (ctx, { roomId, call }) => {
+    const { room, game } = await roomAndGame(ctx, roomId);
+    const { name, input } = call as { name: string; input: Record<string, unknown> };
+    if (name === 'choose_campaign' && phaseOf(room, game) === 'ruleset') {
+      const id = String(input.campaign ?? '');
+      if (!CAMPAIGNS[id]) return;
+      await chooseCampaign(ctx, room, game, id, { byKey: 'host', byName: room.hostName }, false);
+    }
+  },
+});
+
+/**
+ * A person closes the session (play -> resolve). Only once the encounter is
+ * over: in `scene` the zombies are still scheduled to rise and in `combat` a
+ * turn is in flight, and both would keep running under a finished room.
+ */
+export const endSession = mutation({
+  args: { roomId: v.id('rooms'), memberKey: v.string() },
+  handler: async (ctx, { roomId, memberKey }) => {
+    const { room, game } = await roomAndGame(ctx, roomId);
+    const member = await memberOf(ctx, roomId, memberKey);
+    if (!member || member.kind !== 'human') throw new Error('Not at the table');
+    if (phaseOf(room, game) !== 'play') throw new Error('Nothing to end');
+    if (game.phase !== 'victory' && game.phase !== 'cloister') throw new Error('Finish the encounter first, or pause');
+    await ctx.db.patch(roomId, { status: 'finished' });
+    await system(ctx, room, `${member.name} ended the session.`, { kind: 'status', status: 'finished' });
+    await setPhase(ctx, roomId, 'resolve', { byKey: memberKey, byName: member.name });
+    await ctx.scheduler.runAfter(0, internal.wizard.narrate, {
+      roomId,
+      beat: `${member.name} ended the session. Close it as your instructions say: a short recap, the XP, and the two ways forward.`,
+    });
+  },
+});
+
+/**
+ * Put the table back to the sheets (`again`, seats kept) or to the catalogue
+ * (`new`, seats and campaign cleared). The engine document is reset in place so
+ * the room, its members and its transcript carry over.
+ */
+async function resetTable(ctx: MutationCtx, room: Doc<'rooms'>, game: Game, by: { byKey: string; byName: string }, mode: 'again' | 'new') {
+  if (phaseOf(room, game) !== 'resolve') throw new Error('The session is not over');
+  game.phase = 'lobby' satisfies Phase;
+  game.round = 0;
+  game.turnIndex = 0;
+  game.turnToken += 1;
+  game.combatants = [];
+  game.characters = [];
+  game.creatures = [];
+  game.fires = [];
+  game.xp = 0;
+  game.turn = { moved: 0, actionUsed: false, bonusUsed: false, dashed: false, startedAt: 0 } satisfies TurnState;
+  if (mode === 'new') game.seats = {};
+  await save(ctx, game);
+
+  const config: RoomCfg = { ...cfg(room), lastAskDmAt: undefined, lastResearchAt: undefined };
+  if (mode === 'new') delete config.campaign;
+  await ctx.db.patch(room._id, { status: 'lobby', pause: undefined, config });
+
+  if (mode === 'new') {
+    const members = await ctx.db
+      .query('roomMembers')
+      .withIndex('by_room', (q) => q.eq('roomId', room._id))
+      .collect();
+    for (const m of members) {
+      if (m.kind === 'mask') await ctx.db.delete(m._id);
+      else if (m.kind === 'human') await ctx.db.patch(m._id, { ready: false, state: {} });
+    }
+  }
+
+  await system(
+    ctx,
+    room,
+    mode === 'again' ? `${by.byName} set the table for another run. Everyone keeps their sheet.` : `${by.byName} cleared the table for a new campaign.`,
+    { kind: 'reset', mode },
+  );
+  await setPhase(ctx, room._id, mode === 'again' ? 'characters' : 'ruleset', by);
+}
+
+export const playAgain = mutation({
+  args: { roomId: v.id('rooms'), memberKey: v.string() },
+  handler: async (ctx, { roomId, memberKey }) => {
+    const { room, game } = await roomAndGame(ctx, roomId);
+    const member = await memberOf(ctx, roomId, memberKey);
+    if (!member || member.kind !== 'human') throw new Error('Not at the table');
+    await resetTable(ctx, room, game, { byKey: memberKey, byName: member.name }, 'again');
+  },
+});
+
+export const newCampaign = mutation({
+  args: { roomId: v.id('rooms'), memberKey: v.string() },
+  handler: async (ctx, { roomId, memberKey }) => {
+    const { room, game } = await roomAndGame(ctx, roomId);
+    const member = await memberOf(ctx, roomId, memberKey);
+    if (!member || member.kind !== 'human') throw new Error('Not at the table');
+    await resetTable(ctx, room, game, { byKey: memberKey, byName: member.name }, 'new');
   },
 });
 
@@ -559,7 +735,13 @@ async function checkEnd(ctx: MutationCtx, room: Doc<'rooms'>, game: Game): Promi
   if (alive.length === 0 || alive.every((c) => isDown(c))) {
     game.phase = 'defeat' satisfies Phase;
     await save(ctx, game);
-    await host(ctx, room, `The party falls on the sand. The zombies shamble on up the path toward the cloister... The tale of Stormwreck Isle ends here — or begins again with a new room.`, { kind: 'scene', scene: 'defeat' });
+    await host(ctx, room, `The party falls on the sand. The zombies shamble on up the path toward the cloister... The tale of Stormwreck Isle ends here — or begins again from the sheets.`, { kind: 'scene', scene: 'defeat' });
+    await ctx.db.patch(room._id, { status: 'finished' });
+    await setPhase(ctx, room._id, 'resolve', { byKey: 'host', byName: room.hostName });
+    await ctx.scheduler.runAfter(0, internal.wizard.narrate, {
+      roomId: room._id,
+      beat: 'The party has fallen. Close the session as your instructions say: a short recap, the XP, and the two ways forward.',
+    });
     return true;
   }
   return false;
@@ -1286,26 +1468,109 @@ function buildMaskPrompt(game: Game, c: CharacterState, persona: string, maskNam
 // ---------------------------------------------------------------------------
 // The DM's voice, when there is a model to lend it one
 
+/**
+ * What the host knows that the skillfile cannot: who is here, what is chosen,
+ * where the engine is. Appended to the phase's skillfile as `## State`.
+ */
+function stateFor(phase: DndPhase, room: Doc<'rooms'>, game: Game | null, members: Doc<'roomMembers'>[], findings: string[]): string {
+  const cutoff = Date.now() - 45_000;
+  const present = members.filter((m) => m.kind === 'human' && m.lastSeen >= cutoff);
+  const people = present.length ? present.map((m) => m.name).join(', ') : 'nobody yet';
+  const seats = (game?.seats ?? {}) as Seats;
+  const campaign = campaignOf(room);
+  const lines: string[] = [`Host: ${room.hostName}.`];
+  const campaignLine = () => lines.push(`Campaign: ${campaign ? `${campaign.title} (${campaign.ruleset})` : 'not chosen'}.`);
+  const secrets = () => {
+    if (!campaign?.secrets.length) return;
+    lines.push('Secrets (never reveal):');
+    for (const x of campaign.secrets) lines.push(`- ${x}`);
+  };
+
+  switch (phase) {
+    case 'ruleset':
+      lines.push(`People at the table: ${people}.`);
+      lines.push('Campaign catalogue (id — ruleset — title: blurb):');
+      for (const c of Object.values(CAMPAIGNS)) lines.push(`- ${c.id} — ${c.ruleset} — ${c.title}: ${c.blurb}`);
+      break;
+    case 'characters': {
+      campaignLine();
+      lines.push(`People at the table: ${people}.`);
+      lines.push('Sheets:');
+      for (const key of SHEET_KEYS) {
+        const sh = PREGENS[key];
+        const seat = seats[key];
+        const who = seat
+          ? `${seat.ownerName}${seat.ownerKind === 'mask' ? ' (mask)' : seat.confirmed ? ', confirmed' : ', not yet confirmed'}${seat.name ? `, playing ${seat.name}` : ''}`
+          : 'open';
+        lines.push(`- ${sh.race} ${sh.className} (${sh.background}, ${sh.alignment}) — ${who}. ${sh.backstory}`);
+      }
+      const waiting = present.filter((h) => !SHEET_KEYS.some((k) => seats[k]?.ownerKey === h.memberKey && seats[k]?.confirmed));
+      lines.push(
+        waiting.length
+          ? `Still to confirm: ${waiting.map((h) => h.name).join(', ')}.`
+          : SHEET_KEYS.some((k) => seats[k])
+            ? 'Everyone present has confirmed; the Start button is live.'
+            : 'Nobody is seated yet.',
+      );
+      secrets();
+      break;
+    }
+    case 'play': {
+      campaignLine();
+      lines.push(`Party: ${rosterOf(game) || 'not seated yet'}.`);
+      const where: Record<string, string> = {
+        scene: 'the party has just landed on the beach; nothing has attacked yet',
+        combat: `round ${game?.round ?? 0} of the fight on the beach`,
+        victory: 'the beach is won; Elder Runara is coming down to greet them',
+        cloister: "the party is at Dragon's Rest, exploring and talking",
+        defeat: 'the party has fallen',
+      };
+      lines.push(`Scene: ${where[game?.phase ?? 'scene'] ?? game?.phase}.`);
+      if (findings.length) {
+        lines.push('Researched by the table (cite when relevant):');
+        for (const f of findings) lines.push(f);
+      }
+      secrets();
+      break;
+    }
+    case 'resolve':
+      campaignLine();
+      lines.push(`Party: ${rosterOf(game) || 'nobody was seated'}.`);
+      lines.push(`Outcome: ${game?.phase === 'defeat' ? 'the party fell' : 'a person ended the session'}.`);
+      lines.push(`XP earned: ${game?.xp ?? 0}.`);
+      break;
+  }
+  return lines.join('\n');
+}
+
+/**
+ * The host speaks. Its system prompt is the skillfile for the channel's
+ * current phase (skills/dnd/<phase>.md) plus `## State`; in the ruleset phase
+ * it also holds the `choose_campaign` tool, so a clear "yes" in chat moves the
+ * table on without anyone touching the catalogue.
+ */
 export const narrate = internalMutation({
   args: { roomId: v.id('rooms'), beat: v.string() },
   handler: async (ctx, { roomId, beat }) => {
     const room = await ctx.db.get(roomId);
     if (!room) return;
-    if (!hasInference((room.config as { guildId?: string } | undefined)?.guildId)) return;
+    if (!hasInference(cfg(room).guildId)) return;
     const game = await gameFor(ctx, roomId);
-    const roster = ((game?.characters ?? []) as CharacterState[]).map((c) => `${c.name} the ${PREGENS[c.sheetKey].race} ${PREGENS[c.sheetKey].className}`).join(', ');
-    const findings = await findingsFor(ctx, roomId);
+    const phase = phaseOf(room, game);
+    const members = await ctx.db
+      .query('roomMembers')
+      .withIndex('by_room', (q) => q.eq('roomId', roomId))
+      .collect();
+    const findings = phase === 'play' ? await findingsFor(ctx, roomId) : [];
+    const sys = `${skillFor('dnd', phase, { host: room.hostName })}\n\n## State\n${stateFor(phase, room, game, members, findings)}`;
     await ctx.scheduler.runAfter(0, internal.agent.runTurn, {
       roomId,
       memberKey: 'host',
       actorName: room.hostName,
       eventType: 'host',
-      system:
-        `You are ${room.hostName}, the Dungeon Master running "Dragons of Stormwreck Isle" (the 2022 D&D Starter Set) for a table of friends, some of them AI characters. ` +
-        `You are warm, quick, and fair, like the experienced DMs who run the beginner adventure at game stores: you keep things moving, describe vividly in two or three sentences, ask "what do you do?", and never roll for the players or decide their actions. ` +
-        `Rules are 5e 2014. All dice are rolled by the table's engine and appear in the log — never invent results. Party: ${roster || 'not seated yet'}.` +
-        (findings.length ? ` The table has researched these, cite them when relevant:\n${findings.join('\n')}` : ''),
+      system: sys,
       prompt: beat,
+      ...(phase === 'ruleset' ? { tools: [CHOOSE_CAMPAIGN_TOOL], resolver: 'wizard:onPhaseTool' } : {}),
     });
   },
 });
@@ -1341,10 +1606,14 @@ export const askDm = mutation({
         maxIterations: 3,
       });
     }
-    await ctx.scheduler.runAfter(0, internal.wizard.narrate, {
-      roomId,
-      beat: `${member.name} just said: "${text.trim().slice(0, 500)}". Answer them as the DM in one to three sentences. If it is a rules question, answer accurately for 5e 2014${asksForSources ? ' and say the table is looking it up (research results will be posted to the room)' : ''}. If they are describing an action in combat, tell them to use the action controls (the engine resolves actions) but react to their intent in character.`,
-    });
+    const said = `${member.name} just said: "${text.trim().slice(0, 500)}".`;
+    const beats: Record<DndPhase, string> = {
+      ruleset: `${said} If they named a campaign or clearly agreed to the one on offer, call choose_campaign. Otherwise answer as the host in one to three sentences, or say nothing if it needs no answer.`,
+      characters: `${said} Answer as the host in one to three sentences: describe a sheet if they asked about one, suggest one if they asked what to play, nudge toward confirming if that is what the table needs, or say nothing if it needs no answer.`,
+      play: `${said} Answer them as the DM in one to three sentences. If it is a rules question, answer accurately for 5e 2014${asksForSources ? ' and say the table is looking it up (research results will be posted to the room)' : ''}. If they are describing an action in combat, tell them to use the action controls (the engine resolves actions) but react to their intent in character.`,
+      resolve: `${said} Answer in one to three sentences. If they want to play again or start fresh, tell them the buttons under the recap are theirs.`,
+    };
+    await ctx.scheduler.runAfter(0, internal.wizard.narrate, { roomId, beat: beats[phaseOf(room, await gameFor(ctx, roomId))] });
     return { answered: true as const };
   },
 });

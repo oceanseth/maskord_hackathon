@@ -11,6 +11,9 @@ import { useRoom, type RoomEvent, type RoomIdentity } from '../useRoom';
 import { channelRoomSlug, useWizard } from './useWizard';
 import { Lobby } from './Lobby';
 import { GamePanel, SheetModal } from './GamePanel';
+import { CampaignPick } from './CampaignPick';
+import { Resolve } from './Resolve';
+import { campaignLabel } from '../../../../../www/convex/wizard/campaigns';
 import './theme.css';
 
 /**
@@ -24,6 +27,11 @@ import './theme.css';
  *
  * The room binds to the channel by id — slug `wizard:ch-<channelId>` — so one
  * channel is one table, permanently, with nothing to hand around.
+ *
+ * The channel walks four phases — ruleset, characters, play, resolve — and the
+ * right-hand plate shows the one it is in: the campaign catalogue, the sheet
+ * fan, the board, the recap. The host hears every message in every phase and
+ * is prompted with that phase's skillfile (www/convex/skills/dnd).
  */
 
 interface Props {
@@ -49,28 +57,39 @@ export default function DndChannel({ guildId, channelId }: Props) {
   const [sheetFor, setSheetFor] = useState<string | null>(null);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  const playing = wiz.phase !== 'lobby';
+  const phase = wiz.channelPhase;
+  const playing = phase === 'play';
 
   /**
-   * One send, two destinations. The channel message is the durable one; the DM
-   * hears the same words. In the lobby there is no DM to hear, and the channel
-   * message is enough for the table to see.
+   * One send, two destinations. The channel message is the durable one; the
+   * host hears the same words in every phase — while the table is choosing a
+   * campaign or sheets it is the host that keeps things moving, and a "yes" in
+   * chat is how a campaign gets picked without touching the catalogue.
    */
   const handleSend = useCallback(
     async (content: string) => {
       if (!firebaseUser) return;
       setSendError(null);
       await sendMessage(guildId, channelId, firebaseUser.uid, content);
-      if (playing && room.me) {
+      if (room.me) {
         try {
           await wiz.askDm(content);
         } catch (err) {
-          setSendError(err instanceof Error ? err.message : 'The DM did not hear that');
+          setSendError(err instanceof Error ? err.message : 'The host did not hear that');
         }
       }
     },
-    [firebaseUser, guildId, channelId, playing, room.me, wiz],
+    [firebaseUser, guildId, channelId, room.me, wiz],
   );
+
+  const placeholder =
+    phase === 'ruleset'
+      ? `Pick a campaign, or ask the host — #${channelName}`
+      : phase === 'characters'
+        ? `Ask the host about a sheet — #${channelName}`
+        : phase === 'play'
+          ? `Say it in character, or ask the DM — #${channelName}`
+          : `Message #${channelName}`;
 
   return (
     <div className="kf flex-1 flex flex-col min-h-0 min-w-0 bg-[#0e0e16] text-[#e2e8f0]">
@@ -79,6 +98,8 @@ export default function DndChannel({ guildId, channelId }: Props) {
         <MobileBackButton onClick={() => useAppStore.getState().setActiveChannel(null, 'text')} />
         <span className="text-[#6b7280] text-lg">🎲</span>
         <span className="font-semibold text-white text-sm">{channelName}</span>
+        <span className="text-xs text-[#8b8fa3] truncate hidden md:inline">{wiz.campaign ? campaignLabel(wiz.campaign) : 'choosing a campaign'}</span>
+        <span className="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide bg-violet-600/30 text-violet-300" title="Channel phase">{phase}</span>
         <StatusPill status={status} />
         {status === 'paused' && room.room?.pause && (
           <span className="text-xs text-[#8b8fa3] truncate">
@@ -126,21 +147,17 @@ export default function DndChannel({ guildId, channelId }: Props) {
           <Feed guildId={guildId} channelId={channelId} events={room.events} humanKeys={room.members.filter((m) => m.kind === 'human').map((m) => m.memberKey)} currentUserId={firebaseUser?.uid} />
           {sendError && <p className="px-4 pb-1 text-xs text-red-400">{sendError}</p>}
           {identity ? (
-            <MessageInput
-              placeholder={playing ? `Say it in character, or ask the DM — #${channelName}` : `Message #${channelName}`}
-              onSend={handleSend}
-            />
+            <MessageInput placeholder={placeholder} onSend={handleSend} />
           ) : null}
         </div>
 
         {/* The table itself. */}
         {identity && (
           <aside className="kf-plate w-[480px] shrink-0 border-l border-[#1f1f2e] flex flex-col min-h-0 overflow-y-auto">
-            {wiz.phase === 'lobby' ? (
-              <Lobby room={room} wiz={{ ...wiz, start: () => wiz.start(guildId) }} uid={identity.key} />
-            ) : (
-              <GamePanel room={room} wiz={wiz} />
-            )}
+            {phase === 'ruleset' && <CampaignPick wiz={wiz} />}
+            {phase === 'characters' && <Lobby room={room} wiz={{ ...wiz, start: () => wiz.start(guildId) }} uid={identity.key} />}
+            {phase === 'play' && <GamePanel room={room} wiz={wiz} />}
+            {phase === 'resolve' && <Resolve wiz={wiz} />}
           </aside>
         )}
       </div>

@@ -155,6 +155,7 @@ export function GamePanel({ room, wiz }: { room: RoomHandle; wiz: WizardHandle }
         <div className="px-2 pb-2 flex flex-wrap gap-1">
           <Btn accent onClick={() => run(wiz.walkUp())}>Walk up to Dragon's Rest</Btn>
           <Btn onClick={() => run(wiz.shortRest())}>Short rest first</Btn>
+          <Btn onClick={() => run(wiz.endSession())}>End the session</Btn>
         </div>
       )}
       {wiz.phase === 'cloister' && me && !paused && (
@@ -165,6 +166,7 @@ export function GamePanel({ room, wiz }: { room: RoomHandle; wiz: WizardHandle }
               <Btn key={sk} onClick={() => run(wiz.check(sk))}>{sk[0].toUpperCase() + sk.slice(1)}</Btn>
             ))}
             <Btn onClick={() => run(wiz.shortRest())}>Short rest</Btn>
+            <Btn onClick={() => run(wiz.endSession())}>End the session</Btn>
           </div>
           {error && <div className="text-[11px] text-red-300">{error}</div>}
         </div>

@@ -220,3 +220,25 @@ export function chebyshev(a: Position, b: Position): number {
 export function feet(a: Position, b: Position): number {
   return chebyshev(a, b) * 5;
 }
+
+// ---------------------------------------------------------------------------
+// Channel phases
+//
+// A D&D channel walks `ruleset -> characters -> play -> resolve` and the host is
+// prompted with a different skillfile in each (see ../skills/dnd). `Phase` above
+// is the engine's sub-state inside `play` and never surfaces as a channel phase.
+
+export type DndPhase = 'ruleset' | 'characters' | 'play' | 'resolve';
+export const DND_PHASES: DndPhase[] = ['ruleset', 'characters', 'play', 'resolve'];
+
+/**
+ * The channel's phase. Rooms made before phases existed carry none on the room,
+ * so it is derived from the engine and an old table keeps working: a lobby is
+ * still choosing, a fallen party is resolving, everything else is play.
+ */
+export function dndPhase(roomPhase: string | undefined, gamePhase: Phase | undefined): DndPhase {
+  if ((DND_PHASES as string[]).includes(roomPhase ?? '')) return roomPhase as DndPhase;
+  if (!gamePhase || gamePhase === 'lobby') return 'ruleset';
+  if (gamePhase === 'defeat') return 'resolve';
+  return 'play';
+}
