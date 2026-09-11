@@ -116,6 +116,26 @@ export const mirrorToChannel = internalAction({
   },
 });
 
+/**
+ * Who a mirrored line is *from*, which is not always who acted.
+ *
+ * The D&D engine runs every monster under `actorKey: 'host'` with the monster's
+ * own `actorName`, so the DM and every drowned sailor would share one bot
+ * profile. Channel history stores no author name — the client resolves it from
+ * the profile — so the last writer would silently rename every earlier line: a
+ * zombie shambles and the DM's narration from ten minutes ago becomes "Drowned
+ * sailor" until the next host line flips it back. Giving each name its own key
+ * keeps history stable, because nothing ever rewrites a profile it did not
+ * create.
+ */
+function speakerKeyFor(room: Doc<'rooms'>, actorKey: string | undefined, actorName: string): string {
+  if (actorKey && actorKey !== 'host') return actorKey;
+  if (actorName && actorName !== room.hostName) {
+    return `npc:${actorName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40)}`;
+  }
+  return 'host';
+}
+
 export async function appendEvent(
   ctx: MutationCtx,
   roomId: Id<'rooms'>,
@@ -158,7 +178,7 @@ export async function appendEvent(
       await ctx.scheduler.runAfter(0, internal.rooms.mirrorToChannel, {
         guildId,
         channelId,
-        speakerKey: event.actorKey ?? 'host',
+        speakerKey: speakerKeyFor(room, event.actorKey, event.actorName),
         speakerName: event.actorName.slice(0, MAX_NAME),
         speakerAvatarUrl: member?.avatarUrl,
         content: event.body.slice(0, MAX_BODY),
