@@ -8,7 +8,8 @@ import {
   query,
 } from './_generated/server';
 import { api, internal } from './_generated/api';
-import { TURN_CLAIM_TTL_MS, appendEvent, getRoomBySlug, joinMember } from './rooms';
+import { TURN_CLAIM_TTL_MS, appendEvent, getRoomBySlug, joinMember, setPhase } from './rooms';
+import { skillFor } from './skills';
 import { HOUSE_MASKS } from './cast';
 import { callModel, hasInference, judgeModel } from './agent';
 import { callNebius, hasNebius, type NebiusMeasurement } from './nebius';
@@ -72,6 +73,8 @@ export type DebateConfig = {
     winner: string;
     summary: string;
     scores: Array<{ memberKey: string; name: string; total: number; byCriterion: Record<string, number>; note: string }>;
+    /** What the judging call cost — model, wall-clock, tokens. See `nebius.ts`. */
+    measurement?: NebiusMeasurement;
   };
 };
 
@@ -300,7 +303,16 @@ export const state = query({
       cursor: cfg.cursor ?? 0,
       verdict: cfg.verdict ?? null,
       status: room.status,
+      phase: room.phase ?? 'setup',
     };
+  },
+});
+
+/** Phase writes for the `start` action, which cannot touch the database itself. */
+export const movePhase = internalMutation({
+  args: { roomId: v.id('rooms'), phase: v.string(), byName: v.string() },
+  handler: async (ctx, { roomId, phase, byName }) => {
+    await setPhase(ctx, roomId, phase, { byName });
   },
 });
 
@@ -357,6 +369,13 @@ export const start = action({
     await ctx.runMutation(internal.debate.applyConfig, {
       roomId: room._id,
       patch: { topic: motion, rules, round: 1, maxRounds: MAX_ROUNDS, order, cursor: 0 },
+    });
+
+    // The motion exists and the panel is live: that is what `arguing` means.
+    await ctx.runMutation(internal.debate.movePhase, {
+      roomId: room._id,
+      phase: 'arguing',
+      byName: room.hostName,
     });
 
     await ctx.runMutation(internal.agent.emitEvent, {
@@ -635,6 +654,9 @@ export const verdict = internalAction({
 
     const criteria = SCORING_CRITERIA.map((c) => `${c.id} (${c.label})`).join(', ');
     const judgeSystem =
+      `${skillFor('debate', 'verdict', { host: brief.hostName })}
+
+` +
       `You are ${brief.hostName}, moderating a live debate, and you are calling it. ` +
       `Score every debater 0-10 on each of: ${criteria}. Reward wit and specificity; ` +
       `penalise breaking a house rule in force, and reward claims that were actually ` +
@@ -779,5 +801,8 @@ export const finish = internalMutation({
       status: 'finished',
       config: { ...(room.config ?? {}), ...(result ? { verdict: result } : {}) },
     });
+    // Closed, not merely stopped: Masky answers questions about the result
+    // rather than reopening the argument.
+    await setPhase(ctx, roomId, 'closed', { byName: room.hostName });
   },
 });

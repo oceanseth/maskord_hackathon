@@ -1,6 +1,7 @@
 import { useAuth } from '@maskord/shared';
 import type { ChannelMode } from '@maskord/shared';
 import type { RoomIdentity } from '../../rooms/useRoom';
+import DebateChannel from '../../rooms/debate/DebateChannel';
 import DndChannel from '../../rooms/wizard/DndChannel';
 
 /**
@@ -49,21 +50,17 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
     );
   }
 
-  // Boards mount here. Each takes only the guild and channel and derives its
-  // own room slug; the sign-in gate above is the one thing they share.
-  if (mode === 'dnd') return <DndChannel guildId={guildId} channelId={channelId} />;
+  if (mode === 'debate') return <DebateChannel guildId={guildId} channelId={channelId} />;
 
-  // The debate board lands on the same rails; until then the channel says what
-  // it is rather than rendering an empty column.
+  // Every mode with a board returns above. Anything else is a mode somebody
+  // added to the type without a view, which should say so rather than render
+  // an empty column.
   return (
     <Centered>
-      <p className="text-sm font-semibold text-white">Debate floor</p>
-      <p className="text-xs text-[#6b7280] max-w-sm text-center">
-        This channel is in debate mode. The board mounts here — until it lands, the floor is
-        reachable at <code className="text-violet-300">/debate.html?room=ch-{channelId}</code>.
-      </p>
-      <p className="text-[11px] text-[#4b5563]">
-        guild {guildId.slice(0, 8)}… · seat {identity.name}
+      <p className="text-sm font-semibold text-white">Unknown mode</p>
+      <p className="text-xs text-[#6b7280]">
+        This channel is in <code className="text-violet-300">{mode}</code> mode, which has no
+        board yet.
       </p>
     </Centered>
   );

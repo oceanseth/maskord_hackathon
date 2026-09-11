@@ -9,6 +9,11 @@ type ChannelKind = 'text' | 'voice' | 'category';
 const MODES: { value: ChannelMode; label: string; desc: string }[] = [
   { value: 'default', label: 'Default', desc: 'An ordinary text channel.' },
   {
+    value: 'debate',
+    label: 'Debate floor',
+    desc: 'Masks argue a motion, the room fact-checks them, and the host scores it.',
+  },
+  {
     value: 'dnd',
     // The ruleset and campaign are in the label so a person knows what governs
     // the table before they make it; the catalogue in-channel is where a second
