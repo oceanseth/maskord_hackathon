@@ -171,7 +171,7 @@ export const investigate = internalAction({
         type: 'system',
         actorName: 'room',
         body:
-          `Cannot research "${claim.slice(0, 80)}": this deployment has no ` +
+          `Cannot research "${claim.slice(0, 80)}": this deployment is missing ` +
           `${missing.join(' and ')}.`,
         data: { kind: 'missing-capability', capability: 'research', missing },
       });
