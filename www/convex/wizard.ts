@@ -9,6 +9,7 @@ import { PREGENS, SHEET_KEYS } from './wizard/pregens';
 import { BEACH_ZOMBIE_START, HOUSE_MASKS, MAPS, SPELLS, STAT_BLOCKS, ZOMBIE_NAMES } from './wizard/scenario';
 import {
   abilityMod,
+  skillBonus,
   adjacent,
   addCondition,
   approach,
@@ -36,7 +37,7 @@ import {
   sheetOf,
   type Rng,
 } from './wizard/engine';
-import { feet, mod, type Attack, type CharacterState, type Combatant, type CreatureState, type Fire, type Phase, type Position, type SheetKey } from './wizard/types';
+import { feet, mod, SKILLS, type Attack, type CharacterState, type Combatant, type CreatureState, type Fire, type Phase, type Position, type SheetKey, type Skill } from './wizard/types';
 
 /**
  * The D&D table. One `wizardGames` row per wizard room holds the whole scene:
@@ -1323,5 +1324,122 @@ export const setPausedInternal = internalMutation({
     await ctx.db.patch(args.roomId, { status: 'paused', pause: { byKey: args.memberKey, byName: name, reason: args.reason, at: Date.now() } });
     await appendEvent(ctx, args.roomId, { type: 'system', actorKey: args.memberKey, actorName: name, body: `${name} paused the game${args.reason ? `: ${args.reason}` : ''}.`, data: { kind: 'status', status: 'paused' } });
     await host(ctx, room, `Sure — everyone hold a moment.${game.phase === 'combat' && active(game) ? ` ${active(game)!.name} is up when we're back.` : ''}`);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// After the beach: Dragon's Rest (issue #15)
+//
+// Exploration is free-form talk with the DM plus ability checks the engine
+// rolls. The beats below are scripted from the adventure's public outline
+// (see RESEARCH/DND_STORMWRECK_REFERENCE.md in the workspace); a model-backed
+// DM improvises on top when a key is available.
+
+export const walkUp = mutation({
+  args: { roomId: v.id('rooms'), memberKey: v.string() },
+  handler: async (ctx, { roomId, memberKey }) => {
+    const { room, game } = await roomAndGame(ctx, roomId);
+    if (game.phase !== 'victory') throw new Error('The beach is not yours yet');
+    const member = await memberOf(ctx, roomId, memberKey);
+    game.phase = 'cloister' as Phase;
+    game.combatants = [];
+    await save(ctx, game);
+    await appendEvent(ctx, roomId, { type: 'action', actorKey: memberKey, actorName: member?.name ?? 'the party', body: 'leads the way up the stairs.', data: { kind: 'walkUp' } });
+    await host(
+      ctx,
+      room,
+      `The old woman introduces herself as Runara, elder of this cloister, and waves off your thanks — "Hurry, before the cold gets into those cuts." ` +
+        `The stair switches back up the cliff. Halfway, a terrace: six plain stone cells around a weathered statue of a dragon, and three kobolds in gardener's aprons who freeze, then bow, then go back to their vegetables. ` +
+        `Higher still, the smell of bread from a kitchen, a library's open door, herb beds, and at the very top an open-air temple: eight columns joined by arches around a statue of a kindly old man with songbirds on his shoulders. ` +
+        `"Bahamut," Runara says, "though he rarely looks the part." She offers food, rest, and — once you have eaten — a favor to ask. Welcome to Dragon's Rest.`,
+      { kind: 'scene', scene: 'cloister' },
+    );
+    await host(
+      ctx,
+      room,
+      `Runara's asks, over bread and fish stew: the drowned dead have been rising along the north shore for weeks and she wants it stopped; and a ship called the Compass Rose broke on the northern rocks, and something aboard her may be the cause. ` +
+        `A kobold named Tarak tends the gardens, Myla is quick with a story, and Blepp shares a cell with three others. Look around, ask questions, make checks, or rest. What do you do?`,
+      { kind: 'quests', quests: ['Stop the plague of zombies', 'Investigate the wreck of the Compass Rose'] },
+    );
+    await ctx.scheduler.runAfter(0, internal.wizard.narrate, {
+      roomId,
+      beat: 'The party has arrived at the cloister of Dragon\'s Rest and met Elder Runara (an elderly human woman; secretly an adult bronze dragon, do not reveal it) and the kobolds Tarak, Myla and Blepp. Runara has offered two quests: stop the zombie plague, and investigate the wreck of the Compass Rose. In two or three sentences, bring the place alive and invite the players to explore, ask, or rest. Each character also has a personal goal; hint that answers to those might be here.',
+    });
+  },
+});
+
+/** Scripted outcomes for a check in the cloister: DC, and what a pass or a fail turns up. */
+const CLOISTER_CHECKS: Partial<Record<Skill, { dc: number; pass: string; fail: string }>> = {
+  perception: { dc: 12, pass: 'From the temple platform you can see the whole north shore: the beach you fought on, a line of black basalt sea caves to the west, and, on the rocks to the north-east, the broken hull of a ship with its stern still above the tide.', fail: 'Wind, gulls, and a great deal of sea. The cliff top gives a view, but the haze keeps its secrets today.' },
+  investigation: { dc: 15, pass: 'In the library, among histories of the Sword Coast, a slim ledger records the cloister\'s visitors. Six weeks ago: a scholar from Neverwinter, asking about an observatory on the island\'s southern tip. He left for it and did not come back.', fail: 'The library is well kept and its shelves are deep. You would need an afternoon, or someone who knows where to look.' },
+  insight: { dc: 15, pass: 'Runara listens like someone who has heard a great many stories, and when she looks at the sea her eyes are older than her face. She is more than she says she is, and she knows that you noticed.', fail: 'Runara is warm, tired, and worried about her people. Nothing more that you can read.' },
+  persuasion: { dc: 13, pass: 'Runara relents. "The dead began rising the week the Compass Rose went down. Whatever she carried is still aboard, and the harpies that nest in her rigging will not let my kobolds near."', fail: 'Runara smiles and pours more tea. "Eat first. The island will still be here."' },
+  religion: { dc: 10, pass: 'The statue is Bahamut in the guise he takes to walk among mortals: an old man with canaries. The archways carry his seven-pointed platinum star, worn almost smooth by weather and hands.', fail: 'A kindly old man with birds on his shoulders. Somebody\'s grandfather, perhaps.' },
+  history: { dc: 12, pass: 'Stormwreck Isle earned its name honestly: ships have broken here for centuries, and the old tales say two dragons, bronze and blue, once fought above these cliffs until the sea took them both.', fail: 'You know the Sea of Swords is unkind to ships. So does everyone who has sailed it.' },
+  medicine: { dc: 10, pass: 'Your wounds are clean and shallow. A night\'s rest here will see everyone right; a short rest now will take the edge off.', fail: 'You bind what you can. Nothing is bleeding that should not be.' },
+  athletics: { dc: 13, pass: 'You scramble up the rocks behind the temple for a better look and find a kobold-sized path leading west along the cliff, toward the sea caves.', fail: 'The rock is wet and the wind is against you. You come back down with a scraped palm and no new view.' },
+  arcana: { dc: 14, pass: 'There is old magic laid into the temple columns: wards against the undead, faded but intact. Whatever raises the dead on the beach cannot follow them up here.', fail: 'If there is magic in these stones, it is subtler than you can feel.' },
+  nature: { dc: 12, pass: 'Tarak\'s gardens are astonishing for a cliff top: rare herbs, salt-tolerant vegetables, and mushrooms you have only read about. The kobolds have been here a long time and know the island well.', fail: 'Vegetables. Very healthy vegetables.' },
+  stealth: { dc: 12, pass: 'You drift unnoticed to the kobolds\' cell terrace and overhear Blepp complaining that "the rememberer" in the caves has been asking for the outsiders by name.', fail: 'A kobold looks up from the beans and waves at you cheerfully.' },
+  intimidation: { dc: 12, pass: 'Myla the kobold squeaks and admits that some of the kobolds have been sneaking down to the shipwreck for salvage, and two have not come back.', fail: 'The kobold hides behind Runara, who gives you a look you will remember.' },
+  survival: { dc: 12, pass: 'The tide is on the turn. In three hours the northern rocks and the wreck will be reachable on foot; after that, only by boat.', fail: 'The weather is turning and you cannot tell how fast.' },
+};
+
+export const check = mutation({
+  args: { roomId: v.id('rooms'), memberKey: v.string(), skill: v.string(), about: v.optional(v.string()) },
+  handler: async (ctx, { roomId, memberKey, skill, about }) => {
+    const { room, game } = await roomAndGame(ctx, roomId);
+    if (room.status !== 'running') throw new Error('The game is paused');
+    if (game.phase !== 'cloister' && game.phase !== 'scene') throw new Error('Checks are for exploring; in a fight, use your turn');
+    const key = SHEET_KEYS.find((k) => ownerOf(game, k) === memberKey);
+    const c = key ? characterById(game, `pc:${key}`) : undefined;
+    if (!c) throw new Error('You need a character to make a check');
+    const def = SKILLS.find((k) => k.key === skill);
+    if (!def) throw new Error('No such skill');
+    const sheet = sheetOf(c);
+    const dis = def.key === 'stealth' && sheet.acNote.includes('disadvantage on Stealth');
+    const r = d20(rng, skillBonus(sheet, def.key), dis ? 'disadvantage' : 'normal', c.conditions.includes('blessed'), sheet.key === 'rogue');
+    const script = CLOISTER_CHECKS[def.key];
+    const dc = script?.dc ?? 12;
+    const pass = r.total >= dc;
+    await appendEvent(ctx, roomId, { type: 'action', actorKey: memberKey, actorName: c.name, body: `${about?.trim() ? `${about.trim()} — ` : ''}${def.name} check.`, data: { kind: 'check', skill: def.key } });
+    await dice(ctx, room, c.name, memberKey, `${def.name} (${def.ability.toUpperCase()}) ${fmtRoll(r)} vs DC ${dc} — ${pass ? 'success' : 'failure'}`, { kind: 'check', skill: def.key, total: r.total, dc, pass });
+    if (script) await host(ctx, room, pass ? script.pass : script.fail, { kind: 'check-result', skill: def.key, pass });
+    else await host(ctx, room, pass ? `${c.name} succeeds.` : `${c.name} does not manage it.`);
+    await ctx.scheduler.runAfter(0, internal.wizard.narrate, {
+      roomId,
+      beat: `${c.name} made a ${def.name} check${about?.trim() ? ` (${about.trim().slice(0, 120)})` : ''} and ${pass ? 'succeeded' : 'failed'} against DC ${dc}. The table already showed them: "${(pass ? script?.pass : script?.fail) ?? ''}". Add one or two sentences of color or a follow-up hook in your DM voice, then ask what they do. Do not contradict the result.`,
+    });
+  },
+});
+
+/** A short rest: an hour, spend Hit Dice (die + CON), Second Wind and Lay on Hands come back. */
+export const shortRest = mutation({
+  args: { roomId: v.id('rooms'), memberKey: v.string() },
+  handler: async (ctx, { roomId, memberKey }) => {
+    const { room, game } = await roomAndGame(ctx, roomId);
+    if (game.phase !== 'cloister' && game.phase !== 'victory') throw new Error('You cannot rest here');
+    const lines: string[] = [];
+    for (const c of game.characters as CharacterState[]) {
+      if (isDead(c)) continue;
+      const sheet = sheetOf(c);
+      if (c.hp < sheet.hpMax && !(c.resources.hitDiceSpent ?? 0)) {
+        const r = roll(rng, sheet.hitDie);
+        const amount = Math.max(1, r.total + abilityMod(sheet, 'con'));
+        const healed = healCharacter(c, amount);
+        c.resources.hitDiceSpent = 1;
+        await dice(ctx, room, c.name, ownerOf(game, c.sheetKey), `Hit Die ${fmtDice(r)} + CON ${abilityMod(sheet, 'con')} = ${amount}; regains ${healed}${healed < amount ? ' (full)' : ''}`, { kind: 'rest' });
+        lines.push(`${c.name} regains ${healed}`);
+      }
+      if (sheet.key === 'fighter') c.resources.secondWind = 1;
+      if (sheet.key === 'paladin') c.resources.layOnHands = 5;
+      c.conditions = c.conditions.filter((x) => x !== 'unconscious' && x !== 'stable');
+      if (c.hp <= 0) c.hp = 1;
+    }
+    if (game.phase === 'victory') game.phase = 'cloister' as Phase;
+    await save(ctx, game);
+    const member = await memberOf(ctx, roomId, memberKey);
+    await appendEvent(ctx, roomId, { type: 'action', actorKey: memberKey, actorName: member?.name ?? 'the party', body: 'calls for a short rest.', data: { kind: 'rest' } });
+    await host(ctx, room, `An hour by the kitchen fire, bread and stew, boots off. ${lines.length ? lines.join(', ') + ' hit points.' : 'Nobody needed the Hit Dice.'} Second Wind and Lay on Hands are ready again.`, { kind: 'rest' });
   },
 });

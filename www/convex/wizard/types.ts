@@ -196,7 +196,7 @@ export interface Combatant {
   side: 'party' | 'enemy';
 }
 
-export type Phase = 'lobby' | 'scene' | 'combat' | 'victory' | 'defeat';
+export type Phase = 'lobby' | 'scene' | 'combat' | 'victory' | 'defeat' | 'cloister';
 
 export interface Fire {
   pos: Position;

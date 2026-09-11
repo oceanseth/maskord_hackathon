@@ -53,7 +53,8 @@ export function GamePanel({ room, wiz }: { room: RoomHandle; wiz: WizardHandle }
           <div className="font-display font-semibold">
             {wiz.phase === 'scene' && 'On the beach…'}
             {wiz.phase === 'combat' && `Round ${wiz.round} · ${active?.name}${wiz.isMyTurn ? ' — your turn' : ''}`}
-            {wiz.phase === 'victory' && 'Victory'}
+            {wiz.phase === 'victory' && 'The beach is yours'}
+            {wiz.phase === 'cloister' && "Dragon's Rest"}
             {wiz.phase === 'defeat' && 'The party has fallen'}
           </div>
           {wiz.phase === 'combat' && (
@@ -149,6 +150,24 @@ export function GamePanel({ room, wiz }: { room: RoomHandle; wiz: WizardHandle }
       )}
       {wiz.phase === 'scene' && (
         <div className="px-2 pb-2 text-[11px] text-[#8b8fa3]">Something is about to happen. Talk to the DM below.</div>
+      )}
+      {wiz.phase === 'victory' && me && (
+        <div className="px-2 pb-2 flex flex-wrap gap-1">
+          <Btn accent onClick={() => run(wiz.walkUp())}>Walk up to Dragon's Rest</Btn>
+          <Btn onClick={() => run(wiz.shortRest())}>Short rest first</Btn>
+        </div>
+      )}
+      {wiz.phase === 'cloister' && me && !paused && (
+        <div className="px-2 pb-2 space-y-1">
+          <div className="text-[11px] text-[#8b8fa3]">Explore: ask the DM below, or make a check.</div>
+          <div className="flex flex-wrap gap-1">
+            {(['perception', 'investigation', 'insight', 'persuasion', 'religion', 'history', 'arcana', 'nature', 'medicine', 'athletics', 'stealth', 'survival'] as const).map((sk) => (
+              <Btn key={sk} onClick={() => run(wiz.check(sk))}>{sk[0].toUpperCase() + sk.slice(1)}</Btn>
+            ))}
+            <Btn onClick={() => run(wiz.shortRest())}>Short rest</Btn>
+          </div>
+          {error && <div className="text-[11px] text-red-300">{error}</div>}
+        </div>
       )}
     </div>
   );
