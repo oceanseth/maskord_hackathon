@@ -137,6 +137,29 @@ async function system(ctx: MutationCtx, room: Doc<'rooms'>, body: string, data?:
   await appendEvent(ctx, room._id, { type: 'system', actorName: 'room', body, data });
 }
 
+/**
+ * What the table has looked up so far: the final pass of each researched
+ * claim, newest first. Fed to the DM and to masks so sources, not vibes,
+ * settle "can an oil flask set a zombie on fire".
+ */
+async function findingsFor(ctx: QueryCtx | MutationCtx, roomId: Id<'rooms'>, limit = 4): Promise<string[]> {
+  const rows = await ctx.db
+    .query('research')
+    .withIndex('by_room', (q) => q.eq('roomId', roomId))
+    .order('desc')
+    .take(40);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of rows) {
+    if (!r.stopReason || seen.has(r.claim)) continue;
+    seen.add(r.claim);
+    const src = r.sources.slice(0, 2).map((x) => x.url).join(', ');
+    out.push(`- ${r.claim.slice(0, 120)} → ${r.finding.slice(0, 300)} (confidence ${Math.round(r.confidence * 100)}%${src ? `; ${src}` : ''})`);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 async function save(ctx: MutationCtx, game: Game) {
   const { _id, _creationTime, ...rest } = game;
   await ctx.db.replace(_id, rest);
@@ -363,6 +386,15 @@ export const zombiesRise = internalMutation({
     const zr = d20(rng, mod(STAT_BLOCKS.zombie.abilities.dex));
     for (const z of creatures) combatants.push({ id: `npc:${z.key}`, name: z.name, initiative: zr.total, side: 'enemy' });
     await dice(ctx, room, room.hostName, 'host', `zombies' initiative ${fmtRoll(zr)}`, { kind: 'initiative', total: zr.total });
+
+    // Something new on the board: look it up. The findings land in the room as
+    // `research` events and in the research table, where the DM prompt reads them.
+    await ctx.scheduler.runAfter(0, internal.research.investigate, {
+      roomId,
+      claim: 'Zombies in D&D 5th edition (SRD): Undead Fortitude, and whether a flask of oil and fire is an effective tactic against them.',
+      askedBy: room.hostName,
+      maxIterations: 2,
+    });
 
     combatants.sort((a, b) => b.initiative - a.initiative || (a.side === 'party' ? -1 : 1));
     game.combatants = combatants;
@@ -635,9 +667,12 @@ export const onToolCall = internalMutation({
       return;
     }
     if (call.name !== 'take_turn') return;
-    const input = call.input as { say?: string; move_to?: Position; action?: Action };
+    const input = call.input as { say?: string; research?: string; move_to?: Position; action?: Action };
     if (input.say) {
       await appendEvent(ctx, roomId, { type: 'say', actorKey: memberKey, actorName: c.name, body: String(input.say).slice(0, 600) });
+    }
+    if (input.research && String(input.research).trim()) {
+      await ctx.scheduler.runAfter(0, internal.research.investigate, { roomId, claim: String(input.research).slice(0, 300), askedBy: c.name, maxIterations: 2 });
     }
     try {
       if (input.move_to) {
@@ -1140,7 +1175,8 @@ export const maskTurn = internalMutation({
       await ctx.scheduler.runAfter(0, internal.wizard.maskFallback, { roomId, turnToken });
       return;
     }
-    const { system: sys, prompt } = buildMaskPrompt(game, c, member?.persona ?? '', member?.name ?? c.name);
+    const findings = await findingsFor(ctx, roomId);
+    const { system: sys, prompt } = buildMaskPrompt(game, c, member?.persona ?? '', member?.name ?? c.name, findings);
     await ctx.scheduler.runAfter(0, internal.agent.runTurn, {
       roomId,
       memberKey: seat.ownerKey,
@@ -1163,6 +1199,7 @@ const TAKE_TURN_TOOL = {
     type: 'object',
     properties: {
       say: { type: 'string', description: 'One or two sentences, in character, said out loud at the table.' },
+      research: { type: 'string', description: 'Optional: a factual question you want the table to look up (rules, lore, science), e.g. whether oil makes a zombie burn. Ask it in character in `say` too.' },
       move_to: { type: 'object', properties: { x: { type: 'integer' }, y: { type: 'integer' } }, required: ['x', 'y'], description: 'Optional: a square to move to first (within your speed; 5 ft per square).' },
       action: {
         type: 'object',
@@ -1181,7 +1218,7 @@ const TAKE_TURN_TOOL = {
   },
 };
 
-function buildMaskPrompt(game: Game, c: CharacterState, persona: string, maskName: string) {
+function buildMaskPrompt(game: Game, c: CharacterState, persona: string, maskName: string, findings: string[] = []) {
   const sheet = sheetOf(c);
   const map = MAPS[game.mapKey];
   const enemies = livingEnemies(game).map((z) => `- npc:${z.key} ${z.name} at (${z.pos.x},${z.pos.y}), ${feet(c.pos, z.pos)} ft away, ${z.hp <= 0 ? 'down' : z.hp < z.hpMax / 2 ? 'badly hurt' : z.hp < z.hpMax ? 'hurt' : 'unhurt'}${z.conditions.length ? ` [${z.conditions.join(', ')}]` : ''}`);
@@ -1216,7 +1253,8 @@ function buildMaskPrompt(game: Game, c: CharacterState, persona: string, maskNam
     (sheet.key === 'fighter' ? `Second Wind (bonus action, ${c.resources.secondWind ? 'available' : 'spent'}) heals 1d10+1.\n` : '') +
     (sheet.key === 'paladin' ? `Lay on Hands pool: ${c.resources.layOnHands} HP (action, touch, not on undead).\n` : '') +
     `Melee needs to be within 5 ft (adjacent square). Ranged attacks next to an enemy have disadvantage. Zombies have Undead Fortitude: radiant damage or a critical hit keeps them down.\n` +
-    `Reachable squares this turn: ${[...reach.keys()].slice(0, 60).map((k) => `(${k})`).join(' ')}${reach.size > 60 ? ' …' : ''}`;
+    `Reachable squares this turn: ${[...reach.keys()].slice(0, 60).map((k) => `(${k})`).join(' ')}${reach.size > 60 ? ' …' : ''}` +
+    (findings.length ? `\n\nWhat the table has looked up (with sources):\n${findings.join('\n')}` : '');
   return { system, prompt };
 }
 
@@ -1231,6 +1269,7 @@ export const narrate = internalMutation({
     if (!hasInference((room.config as { guildId?: string } | undefined)?.guildId)) return;
     const game = await gameFor(ctx, roomId);
     const roster = ((game?.characters ?? []) as CharacterState[]).map((c) => `${c.name} the ${PREGENS[c.sheetKey].race} ${PREGENS[c.sheetKey].className}`).join(', ');
+    const findings = await findingsFor(ctx, roomId);
     await ctx.scheduler.runAfter(0, internal.agent.runTurn, {
       roomId,
       memberKey: 'host',
@@ -1239,7 +1278,8 @@ export const narrate = internalMutation({
       system:
         `You are ${room.hostName}, the Dungeon Master running "Dragons of Stormwreck Isle" (the 2022 D&D Starter Set) for a table of friends, some of them AI characters. ` +
         `You are warm, quick, and fair, like the experienced DMs who run the beginner adventure at game stores: you keep things moving, describe vividly in two or three sentences, ask "what do you do?", and never roll for the players or decide their actions. ` +
-        `Rules are 5e 2014. All dice are rolled by the table's engine and appear in the log — never invent results. Party: ${roster || 'not seated yet'}.`,
+        `Rules are 5e 2014. All dice are rolled by the table's engine and appear in the log — never invent results. Party: ${roster || 'not seated yet'}.` +
+        (findings.length ? ` The table has researched these, cite them when relevant:\n${findings.join('\n')}` : ''),
       prompt: beat,
     });
   },
@@ -1257,9 +1297,18 @@ export const askDm = mutation({
       await ctx.scheduler.runAfter(0, internal.wizard.setPausedInternal, { roomId, memberKey, reason: 'asked to pause' });
       return;
     }
+    const asksForSources = /\?/.test(text) && /\b(really|actually|can|does|would|is it true|rules?|how (?:does|do)|source|look (?:it )?up|research)\b/i.test(text);
+    if (asksForSources) {
+      await ctx.scheduler.runAfter(0, internal.research.investigate, {
+        roomId,
+        claim: text.trim().slice(0, 300),
+        askedBy: member.name,
+        maxIterations: 3,
+      });
+    }
     await ctx.scheduler.runAfter(0, internal.wizard.narrate, {
       roomId,
-      beat: `${member.name} just said: "${text.trim().slice(0, 500)}". Answer them as the DM in one to three sentences. If it is a rules question, answer accurately for 5e 2014. If they are describing an action in combat, tell them to use the action controls (the engine resolves actions) but react to their intent in character.`,
+      beat: `${member.name} just said: "${text.trim().slice(0, 500)}". Answer them as the DM in one to three sentences. If it is a rules question, answer accurately for 5e 2014${asksForSources ? ' and say the table is looking it up (research results will be posted to the room)' : ''}. If they are describing an action in combat, tell them to use the action controls (the engine resolves actions) but react to their intent in character.`,
     });
   },
 });
