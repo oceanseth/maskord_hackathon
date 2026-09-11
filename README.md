@@ -107,10 +107,11 @@ So `.env.local` tells you nothing about what the live site uses, and there is
 no way to point the deployed site at a dev deployment by accident.
 
 Environment variables live on a deployment, not in the repo and not on a
-branch. A cloud dev deployment (`quiet-mole-409`) exists from initial setup;
-Seth has said it should be deleted (2026-09-11), so do not rely on it. Use the
-local anonymous backend for development (below), and always check `--prod` for
-what the site can see:
+branch. A cloud dev deployment (`quiet-mole-409`) exists from initial setup
+and is what a plain `npx convex dev` writes into `.env.local`. Seth wants it
+deleted; it stays until after judging so nobody's local dev breaks mid-event.
+Do not rely on it. Use the local anonymous backend for development (below),
+and always check `--prod` for what the site can see:
 
 ```bash
 cd www
@@ -222,11 +223,13 @@ without it: humans can play, dice roll, transcripts fill, masks fall back to
 scripted behaviour. `agent:capabilities` reports which path is active (`via:
 deployment | server | none`).
 
-Status on 2026-09-11: the chosen path is B. Seth has put the Anthropic key on
-the default Maskord server (Server Settings → AI Assistance), so the remaining
-steps are deploying `roomTurn` with its two secrets and setting
-`ROOM_BRIDGE_URL` / `ROOM_BRIDGE_SECRET` on Convex prod. Until then prod
-reports `via: "none"`.
+Status on 2026-09-11: path B is live. The key is on the default Maskord
+server (Server Settings → AI Assistance), `roomTurn` is deployed with
+`ROOM_BRIDGE_SECRET` and `ROOM_BRIDGE_GUILDS`, prod has `ROOM_BRIDGE_URL` /
+`ROOM_BRIDGE_SECRET`, and `agent:capabilities` reports `via: "server"`. The
+one open item is the key itself: Anthropic rejects it as an org-level key
+("not scoped to a workspace"), so a workspace-scoped key has to be pasted into
+Server Settings, or the bridge has to send `anthropic-workspace-id`.
 
 The client's RevenueCat key in `app/desktop/src/lib/purchases.ts` is a public
 Test Store key, intentionally, for the hackathon.

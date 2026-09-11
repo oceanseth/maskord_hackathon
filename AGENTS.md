@@ -44,9 +44,11 @@ fix.
    import of `_generated/api`, with unused locals and parameters as errors, and
    it builds all three bundles. The client and rooms builds are `vite build`
    only: a type error in `app/desktop` that is not reachable from `www/src`
-   does not fail CI. `tsc -p app/desktop --noEmit` is not clean on `main` as of
-   2026-09-11, so use your editor's diagnostics on the files you touched rather
-   than expecting zero errors from it.
+   does not fail CI. Check the client yourself with `npx tsc -p app/desktop
+   --noEmit` from the repo root. It is clean on `main` **after a root `npm
+   install`**; with a stale install it reports a missing
+   `@revenuecat/purchases-js` and an `err is unknown` in `purchases.ts` that
+   are install artefacts, not bugs.
 2. If you touched `www/convex/`, confirm the local backend accepted it (`npx
    convex dev` prints the push result) and drive the changed function with
    `npx convex run`.

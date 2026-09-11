@@ -74,10 +74,30 @@ after the last human closes the page.
 3. Everything visible is appended to `roomEvents`. Spectator pages subscribe to
    the same log; there is no second source of truth.
 
-`rooms.claimTurn` / `releaseTurn` (a 20 s lease per `runnerId`, exposed by
-`useRoom`) exist in the shared layer for a client-driven runner, but as of
-2026-09-11 neither mode calls them. Do not treat the lease as what serialises
-turns today; the scheduler and the turn token do.
+The two modes serialise turns differently:
+
+- **Debate:** every open tab runs the advance timer, so `debate.takeTurn`
+  writes the room's `turn` claim itself and returns early while one is held
+  (`TURN_CLAIM_TTL_MS`, 20 s). It is a lease with a TTL and no release, because
+  `runTurn` is shared and cannot hand it back; a crashed turn expires instead
+  of wedging the room.
+- **D&D table:** one `wizardGames` row owns whose turn it is; scheduled work
+  carries the `turnToken` it was issued for and bails if the table has moved on.
+
+`rooms.claimTurn` / `releaseTurn` are exposed by `useRoom` for a client-driven
+runner, but as of 2026-09-11 nothing calls them.
+
+## Direction (Seth, 2026-09-11)
+
+The separate pages were the fastest way to ship without touching `/app/`, not
+the final shape. Seth wants the D&D table to be a **channel mode**: a Mode
+dropdown in the create-channel popup, the game rendered in place of the chat
+room for that channel, and the channel's own messages and voice feeding the
+game. The agreed shape is `mode` as a field on the channel document (not a new
+channel `type`), a third branch in `MainLayout` beside `TextChannel` and
+`VoiceChannel`, and the room bound to the channel by id (slug
+`wizard:ch-<channelId>`). `/wizard.html` stays alive until the in-channel
+version works.
 
 **Dice are rolled by the server, never by a mask.** A mask declares intent
 through the tool call; the engine in `wizard/engine.ts` rolls, resolves and
