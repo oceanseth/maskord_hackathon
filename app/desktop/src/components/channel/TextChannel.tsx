@@ -252,7 +252,19 @@ function MessageRow({
     return (
       <div className="flex items-center gap-2 px-4 py-1.5 text-xs text-[#6b7280]">
         <span>👋</span>
-        <span><span className="text-violet-400 font-medium">{name}</span> joined the server.</span>
+        {/* Clickable like any other author: a join notice is often the first
+            and only place you see a new person's name, so it has to be the way
+            you open their profile and add them. */}
+        <span>
+          <button
+            onClick={(e) => onUserClick(message.authorId, e)}
+            className="text-violet-400 font-medium hover:underline cursor-pointer"
+            title={`View ${name}'s profile`}
+          >
+            {name}
+          </button>
+          {' '}joined the server.
+        </span>
       </div>
     );
   }

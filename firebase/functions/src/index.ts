@@ -232,6 +232,27 @@ export const joinDefaultGuild = onCall(async (request) => {
     userId,
     joinedAt: admin.firestore.FieldValue.serverTimestamp(),
   });
+
+  // Say hello in #general, the same as an invite join does. In the shared
+  // server this is also how you meet anyone: the join notice is often the only
+  // place a new person's name appears, and it opens their profile.
+  const firstTextChannel = await db.collection(`guilds/${guildId}/channels`)
+    .where('type', '==', 'text').orderBy('position').limit(1).get();
+  if (!firstTextChannel.empty) {
+    const channelId = firstTextChannel.docs[0].id;
+    batch.set(db.collection(`guilds/${guildId}/channels/${channelId}/messages`).doc(), {
+      content: '',
+      authorId: userId,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      editedAt: null,
+      attachments: [],
+      reactions: {},
+      mentions: [],
+      pinned: false,
+      type: 'system_join',
+    });
+  }
+
   await batch.commit();
 
   return { guildId, alreadyMember: false };
