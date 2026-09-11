@@ -1545,7 +1545,7 @@ function stateFor(phase: DndPhase, room: Doc<'rooms'>, game: Game | null, member
 
 /**
  * The host speaks. Its system prompt is the skillfile for the channel's
- * current phase (skills/dnd/<phase>.md) plus `## State`; in the ruleset phase
+ * current phase (skills/dndcampaign/<phase>.md) plus `## State`; in the ruleset phase
  * it also holds the `choose_campaign` tool, so a clear "yes" in chat moves the
  * table on without anyone touching the catalogue.
  */
@@ -1562,7 +1562,7 @@ export const narrate = internalMutation({
       .withIndex('by_room', (q) => q.eq('roomId', roomId))
       .collect();
     const findings = phase === 'play' ? await findingsFor(ctx, roomId) : [];
-    const sys = `${skillFor('dnd', phase, { host: room.hostName })}\n\n## State\n${stateFor(phase, room, game, members, findings)}`;
+    const sys = `${skillFor('dndcampaign', phase, { host: room.hostName })}\n\n## State\n${stateFor(phase, room, game, members, findings)}`;
     await ctx.scheduler.runAfter(0, internal.agent.runTurn, {
       roomId,
       memberKey: 'host',
