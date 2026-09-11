@@ -209,9 +209,22 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
             >
               {onTheFloor ? 'On the floor' : 'Take the floor'}
             </button>
+            {/*
+              A fact-check is a search *and* a reading of what it found, so it
+              needs both keys: `research.investigate` refuses up front when
+              either is missing. Gating on `research` alone offered a button
+              that could only ever answer "cannot research" — which is exactly
+              what LINKUP_API_KEY arriving before an AI key would have shown.
+            */}
             <button
-              disabled={!claim.trim() || !caps?.research}
-              title={caps?.research ? undefined : 'Needs LINKUP_API_KEY'}
+              disabled={!claim.trim() || !caps?.research || !caps?.inference}
+              title={
+                caps?.research
+                  ? caps?.inference
+                    ? undefined
+                    : 'Needs an AI key — the sources still have to be weighed'
+                  : 'Needs LINKUP_API_KEY'
+              }
               onClick={async () => {
                 await factCheck({ slug: room.slug, claim: claim.trim() });
                 setClaim('');
