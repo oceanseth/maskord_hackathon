@@ -18,7 +18,7 @@ import {
 import { httpsCallable } from 'firebase/functions';
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { getFirebaseDb, getFirebaseFunctions, getFirebaseStorage } from '../firebase/init';
-import type { Guild, GuildMember, Role, Channel, ChannelType } from '../types';
+import type { Guild, GuildMember, Role, Channel, ChannelType, ChannelMode } from '../types';
 
 // ─── User's guild list ────────────────────────────────────────────────────────
 
@@ -156,12 +156,15 @@ export async function createGuild(_ownerId: string, name: string): Promise<strin
 
 export async function createChannel(
   guildId: string,
-  data: { name: string; type: ChannelType; parentId?: string | null; position?: number },
+  data: { name: string; type: ChannelType; parentId?: string | null; position?: number; mode?: ChannelMode },
 ): Promise<string> {
   const db = getFirebaseDb();
   const ref = await addDoc(collection(db, 'guilds', guildId, 'channels'), {
     name: data.name,
     type: data.type,
+    // Written only when it is not the default, so existing channels and plain
+    // ones look identical in Firestore.
+    ...(data.mode && data.mode !== 'default' ? { mode: data.mode } : {}),
     position: data.position ?? 999,
     topic: null,
     slowmode: 0,
@@ -175,7 +178,7 @@ export async function createChannel(
 export async function updateChannel(
   guildId: string,
   channelId: string,
-  updates: Partial<Pick<Channel, 'name' | 'topic' | 'position' | 'parentId' | 'claudeMode' | 'claudeMediaMode'>>,
+  updates: Partial<Pick<Channel, 'name' | 'topic' | 'position' | 'parentId' | 'claudeMode' | 'claudeMediaMode' | 'mode'>>,
 ): Promise<void> {
   const db = getFirebaseDb();
   await updateDoc(doc(db, 'guilds', guildId, 'channels', channelId), updates as Record<string, unknown>);

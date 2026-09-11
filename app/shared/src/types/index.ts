@@ -111,10 +111,22 @@ export interface ChannelAvatar {
   joinedAt?: number;
 }
 
+/**
+ * What a text channel *is*, beyond a list of messages.
+ *
+ * Deliberately a separate axis from `ChannelType`: a game channel is still a
+ * text channel — same messages, same permissions, same unread counts — and only
+ * the view over it differs. Making D&D a `ChannelType` would fork all of that.
+ * Absent means `'default'`; every channel that existed before this is one.
+ */
+export type ChannelMode = 'default' | 'dnd' | 'debate';
+
 export interface Channel {
   id: string;
   name: string;
   type: ChannelType;
+  /** Only meaningful for text channels. Absent = 'default'. */
+  mode?: ChannelMode;
   position: number;
   topic: string | null;
   slowmode: number; // seconds

@@ -528,7 +528,7 @@ export default function ChannelSidebar({ guildId }: Props) {
           defaultType={(showCreateChannel.defaultType as 'text' | 'voice' | 'category') ?? 'text'}
           categoryId={showCreateChannel.parentId}
           onClose={() => setShowCreateChannel(null)}
-          onCreate={async (name, type, parentId) => { await createChannel(guildId, { name, type, parentId }); }}
+          onCreate={async (name, type, parentId, mode) => { await createChannel(guildId, { name, type, parentId, mode }); }}
         />
       )}
       {settingsChannelId && (() => {

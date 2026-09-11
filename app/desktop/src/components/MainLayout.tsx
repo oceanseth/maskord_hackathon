@@ -1,3 +1,5 @@
+import { useGuildChannels } from '@maskord/shared';
+import type { Channel } from '@maskord/shared';
 import { useAppStore } from '../store/app';
 import { useIsMobile } from '../hooks/useIsMobile';
 import GuildSidebar from './guild/GuildSidebar';
@@ -5,6 +7,7 @@ import ChannelSidebar from './channel/ChannelSidebar';
 import HomePanel from './home/HomePanel';
 import HomeDashboard from './home/HomeDashboard';
 import TextChannel from './channel/TextChannel';
+import ChannelGameView from './channel/ChannelGameView';
 import VoiceChannel from './voice/VoiceChannel';
 import { VoiceProvider } from './voice/VoiceProvider';
 import DmPanel from './voice/DmPanel';
@@ -20,6 +23,13 @@ export default function MainLayout() {
   } = useAppStore();
 
   const isMobile = useIsMobile();
+
+  // The mode is read from the channel itself rather than carried in the store:
+  // it can change while the channel is open, and the store's active-channel
+  // tuple is set from eight call sites that have no reason to learn about modes.
+  const channels = useGuildChannels(activeGuildId ?? null);
+  const mode = channels.find((c: Channel) => c.id === activeChannelId)?.mode ?? 'default';
+  const isGameChannel = activeChannelType === 'text' && mode !== 'default';
 
   // On mobile we render either the sidebars OR the active content pane, never
   // both — otherwise three flex columns get crushed into ~50px each.
@@ -56,8 +66,11 @@ export default function MainLayout() {
             {!activeDmPartnerId && activeView === 'home' && !isMobile && (
               <HomeDashboard />
             )}
-            {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelType === 'text' && activeChannelId && (
+            {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelType === 'text' && activeChannelId && !isGameChannel && (
               <TextChannel guildId={activeGuildId} channelId={activeChannelId} />
+            )}
+            {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelId && isGameChannel && (
+              <ChannelGameView guildId={activeGuildId} channelId={activeChannelId} mode={mode} />
             )}
             {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelType === 'voice' && activeChannelId && (
               <VoiceChannel guildId={activeGuildId} channelId={activeChannelId} />
