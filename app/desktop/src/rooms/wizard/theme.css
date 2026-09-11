@@ -1,0 +1,178 @@
+/*
+ * The Wizard's Table — a King's Field / Queen's Domain design language.
+ * Scoped to `.kf` so the debate pages and the Maskord client are untouched.
+ * Structure is unchanged; this is surface: iron plates with bevelled edges,
+ * dithered grain, torchlight, aged parchment, and a bitmap face for numbers.
+ */
+.kf {
+  --kf-pit: #0b0a0c;
+  --kf-char: #1a1714;
+  --kf-iron: #2b2620;
+  --kf-iron-hi: #4a4033;
+  --kf-brass: #8a6a3a;
+  --kf-amber: #c9a35a;
+  --kf-moss: #6b7a5e;
+  --kf-blood: #7a2f2a;
+  --kf-bone: #d8cdb0;
+  --kf-ink: #1b1510;
+  --kf-parchment: #cdbb90;
+  --kf-face: 'IM Fell English', 'Iowan Old Style', Georgia, serif;
+  --kf-bitmap: 'VT323', 'Courier New', monospace;
+  --kf-bevel: inset 1px 1px 0 var(--kf-iron-hi), inset -1px -1px 0 var(--kf-pit);
+  --kf-bevel-in: inset 1px 1px 0 var(--kf-pit), inset -1px -1px 0 var(--kf-iron-hi);
+  font-family: var(--kf-face);
+  color: var(--kf-bone);
+  background-color: var(--kf-char);
+  background-image:
+    repeating-conic-gradient(from 0deg, rgba(255, 255, 255, 0.025) 0% 25%, transparent 0% 50%);
+  background-size: 4px 4px;
+  line-height: 1.45;
+  letter-spacing: 0.01em;
+}
+.kf .font-display { font-family: var(--kf-face); font-weight: 400; letter-spacing: 0.02em; }
+.kf .font-body { font-family: var(--kf-face); }
+.kf .font-mono, .kf .tabular-nums { font-family: var(--kf-bitmap); font-size: 1.15em; letter-spacing: 0; }
+
+/* Plates: everything that was a rounded card becomes a bevelled iron plate. */
+.kf .rounded, .kf .rounded-lg, .kf .rounded-full, .kf [class*='rounded'] { border-radius: 0; }
+.kf .border, .kf [class*='border-'] { border-color: var(--kf-iron-hi); }
+.kf [class*='bg-\[\#'], .kf [class*='bg-sky'], .kf [class*='bg-emerald'], .kf [class*='bg-amber'], .kf [class*='bg-fuchsia'] {
+  background-image: none;
+}
+.kf .rp-header, .kf .rp-members, .kf .rp-say, .kf .kf-plate {
+  background: var(--kf-iron);
+  box-shadow: var(--kf-bevel);
+  border-color: var(--kf-pit);
+}
+.kf .rp-log { background: transparent; }
+
+/* Buttons: pressed-iron toggles. The accent stays reserved for the torch. */
+.kf button {
+  font-family: var(--kf-face);
+  border-radius: 0;
+  border: 1px solid var(--kf-pit);
+  background: var(--kf-iron);
+  color: var(--kf-bone);
+  box-shadow: var(--kf-bevel);
+  transition: none;
+}
+.kf button:hover:not(:disabled) { background: var(--kf-iron-hi); }
+.kf button:active:not(:disabled) { box-shadow: var(--kf-bevel-in); }
+.kf button:focus-visible { outline: 2px solid var(--kf-amber); outline-offset: 1px; }
+.kf button[class*='bg-sky'], .kf button[class*='border-sky'] { background: #2f3d3a; color: var(--kf-bone); }
+.kf button[class*='bg-emerald'] { background: #34472f; }
+.kf button[class*='bg-amber'] { background: #5a3d1a; color: var(--kf-amber); }
+.kf button[class*='bg-fuchsia'], .kf button[class*='border-fuchsia'] { background: #3b2a3a; }
+.kf input {
+  font-family: var(--kf-face);
+  border-radius: 0;
+  background: var(--kf-pit);
+  border: 1px solid var(--kf-iron-hi);
+  color: var(--kf-bone);
+  box-shadow: var(--kf-bevel-in);
+}
+.kf input:focus { outline: none; border-color: var(--kf-brass); }
+.kf ::placeholder { color: #7a705c; font-style: italic; }
+
+/* The log: the DM in ink, dice in bitmap amber on a dark slab. */
+.kf .rp-event-host { color: var(--kf-bone); }
+.kf .rp-event-host > span:first-child { color: var(--kf-amber); font-variant: small-caps; letter-spacing: 0.04em; }
+.kf .rp-event-dice {
+  font-family: var(--kf-bitmap);
+  font-size: 15px;
+  color: var(--kf-amber);
+  background: var(--kf-pit);
+  box-shadow: var(--kf-bevel-in);
+  border-radius: 0;
+}
+.kf .rp-event-system { color: #8f8570; font-style: italic; }
+.kf .rp-event-research { background: #22301f; color: #c3d1b0; box-shadow: var(--kf-bevel-in); border-radius: 0; }
+.kf .rp-event-say > span:first-child { color: #d9c08a; }
+.kf .rp-event-action { color: #b9ae94; }
+
+/* Member chips: iron tags. */
+.kf .rp-members > div { background: var(--kf-pit); border-color: var(--kf-iron-hi); border-radius: 0; }
+.kf .rp-members img, .kf .rp-members span[style*='border-radius'] { border-radius: 0 !important; }
+
+/* Status pills read as stamped metal. */
+.kf .kf-pill, .kf [class*='uppercase'][class*='tracking-wide']:not(.kf-sheet *) {
+  font-family: var(--kf-bitmap);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+  border-radius: 0;
+  box-shadow: var(--kf-bevel-in);
+}
+
+/* Sheet section labels: small italic ink, not stamped metal. */
+.kf .kf-sheet [class*='uppercase'] { font-family: var(--kf-face); font-style: italic; text-transform: none; letter-spacing: 0; font-size: 11px; color: #5a4322; }
+
+/* Sheets: parchment with a scorched edge. Text stays dark ink. */
+.kf .kf-sheet {
+  background:
+    radial-gradient(ellipse at 50% 40%, rgba(255, 250, 230, 0.35), transparent 70%),
+    var(--kf-parchment);
+  color: var(--kf-ink);
+  border: 1px solid #5a4322;
+  border-radius: 0;
+  box-shadow:
+    inset 0 0 18px rgba(70, 40, 10, 0.55),
+    inset 0 0 3px rgba(40, 20, 5, 0.8),
+    0 6px 14px rgba(0, 0, 0, 0.6);
+  font-family: var(--kf-face);
+}
+.kf .kf-sheet [class*='bg-\[\#fbf6ea\]'] { background: rgba(255, 248, 225, 0.45); border-color: #8a6a3a; border-radius: 0; }
+.kf .kf-sheet [class*='border-\[\#b9ab8c\]'] { border-color: #8a6a3a; }
+.kf .kf-sheet .font-display { font-family: var(--kf-face); }
+.kf .kf-sheet .tabular-nums, .kf .kf-sheet .font-bold.text-base, .kf .kf-sheet .font-bold.text-sm { font-family: var(--kf-bitmap); font-size: 1.25em; font-weight: 400; }
+.kf .kf-sheet button { background: #b9a67a; color: var(--kf-ink); border-color: #5a4322; box-shadow: none; }
+.kf .kf-sheet button:hover { background: #d6c59a; }
+
+/* The fanned cards in the lobby are small sheets too. */
+.kf .kf-fan-card {
+  background: var(--kf-parchment);
+  color: var(--kf-ink);
+  border: 1px solid #5a4322;
+  border-radius: 0;
+  box-shadow: inset 0 0 10px rgba(70, 40, 10, 0.5), 0 4px 10px rgba(0, 0, 0, 0.6);
+}
+.kf .kf-fan-card.is-shown { outline: 2px solid var(--kf-amber); outline-offset: 0; }
+
+/* The board: torchlight. The one place the accent is allowed to glow. */
+.kf .kf-board {
+  position: relative;
+  background: var(--kf-pit);
+  box-shadow: var(--kf-bevel-in);
+}
+.kf .kf-board::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at 50% 45%, transparent 35%, rgba(0, 0, 0, 0.25) 60%, rgba(0, 0, 0, 0.7) 100%),
+    repeating-conic-gradient(from 0deg, rgba(0, 0, 0, 0.12) 0% 25%, transparent 0% 50%);
+  background-size: 100% 100%, 3px 3px;
+}
+.kf .kf-token-active { animation: kf-torch 1.6s ease-in-out infinite alternate; }
+@keyframes kf-torch {
+  from { box-shadow: 0 0 0 2px var(--kf-amber), 0 0 10px 2px rgba(201, 163, 90, 0.55); }
+  to { box-shadow: 0 0 0 2px #e6c77a, 0 0 16px 5px rgba(201, 163, 90, 0.8); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .kf .kf-token-active { animation: none; box-shadow: 0 0 0 2px var(--kf-amber), 0 0 12px 3px rgba(201, 163, 90, 0.6); }
+}
+
+/* Headline on the map screen. */
+.kf .kf-title {
+  font-family: var(--kf-face);
+  font-size: 28px;
+  letter-spacing: 0.06em;
+  color: var(--kf-bone);
+  text-shadow: 0 1px 0 var(--kf-pit), 0 0 18px rgba(201, 163, 90, 0.25);
+}
+.kf .kf-sub { color: #9a8f78; font-style: italic; }
+.kf .kf-hp { font-family: var(--kf-bitmap); font-size: 17px; color: var(--kf-amber); }
+.kf .kf-dead { color: #6b5f4d; text-decoration: line-through; }
+.kf .kf-turn { color: var(--kf-amber); }
+.kf .kf-scroll::-webkit-scrollbar-thumb { background: var(--kf-iron-hi); border-radius: 0; }

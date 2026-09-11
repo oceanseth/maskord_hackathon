@@ -46,8 +46,8 @@ export function GamePanel({ room, wiz }: { room: RoomHandle; wiz: WizardHandle }
   return (
     <div className="border-b border-[#1f1f2e]">
       <div className="p-2 flex gap-2">
-        <div className="shrink-0 overflow-auto rounded border border-[#1f1f2e]" style={{ maxWidth: 260 }}>
-          <TileMap map={wiz.map} characters={wiz.characters} creatures={wiz.creatures} fires={wiz.fires} activeId={active?.id} highlight={reach} onSquare={onSquare} cell={10} labels={false} />
+        <div className="kf-board shrink-0 overflow-auto rounded border border-[#1f1f2e]" style={{ maxWidth: 260 }}>
+          <TileMap map={wiz.map} characters={wiz.characters} creatures={wiz.creatures} fires={wiz.fires} activeId={active?.id} highlight={reach} onSquare={onSquare} cell={10} labels={false} theme="kf" />
         </div>
         <div className="flex-1 min-w-0 text-xs space-y-1">
           <div className="font-display font-semibold">

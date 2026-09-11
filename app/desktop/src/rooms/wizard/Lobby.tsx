@@ -49,7 +49,7 @@ export function Lobby({ room, wiz, uid }: { room: RoomHandle; wiz: WizardHandle;
               key={key}
               disabled={!!taken && (seat!.confirmed || seat!.ownerKind === 'mask')}
               onClick={() => { setSelected(key); setMinimised(false); }}
-              className={`absolute top-0 w-32 h-36 rounded-lg border text-left p-2 transition-transform shadow-lg ${
+              className={`kf-fan-card ${shown === key ? 'is-shown' : ''} absolute top-0 w-32 h-36 rounded-lg border text-left p-2 transition-transform shadow-lg ${
                 shown === key ? 'z-20 -translate-y-2 border-amber-400' : 'border-[#3b3b52] hover:-translate-y-1'
               } ${taken ? 'opacity-60' : ''}`}
               style={{ left: `${i * 60}px`, background: '#f3ead7', color: '#1b1710', zIndex: shown === key ? 20 : i }}

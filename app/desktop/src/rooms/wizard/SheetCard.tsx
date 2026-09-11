@@ -36,7 +36,7 @@ export function SheetCard({
   const ac = state?.conditions.includes('mageArmor') && sheet.key === 'wizard' ? 13 + mod(sheet.abilities.dex) : sheet.ac;
 
   return (
-    <div className={`rounded-lg border border-[#3b3b52] bg-[#f3ead7] text-[#1b1710] shadow-xl ${compact ? 'text-[11px]' : 'text-xs'} font-body selectable`} style={{ minWidth: compact ? 260 : 340 }}>
+    <div className={`kf-sheet rounded-lg border border-[#3b3b52] bg-[#f3ead7] text-[#1b1710] shadow-xl ${compact ? 'text-[11px]' : 'text-xs'} font-body selectable`} style={{ minWidth: compact ? 260 : 340 }}>
       <div className="flex items-start justify-between gap-2 px-3 pt-2 pb-1 border-b border-[#b9ab8c]">
         <div>
           <div className="font-display text-base font-bold leading-tight">{name}</div>

@@ -33,7 +33,7 @@ export function RoomPanel({
 
   return (
     <div className="flex flex-col h-full min-h-0 font-body text-[#e2e8f0]">
-      <div className="px-4 py-3 border-b border-[#1f1f2e] flex items-center gap-3">
+      <div className="rp-header px-4 py-3 border-b border-[#1f1f2e] flex items-center gap-3">
         <div className="min-w-0 flex-1">
           <div className="font-display font-semibold truncate">{doc?.title ?? '…'}</div>
           <div className="text-xs text-[#8b8fa3] flex items-center gap-2">
@@ -104,7 +104,7 @@ export function MemberStrip({
     return rank(a) - rank(b) || a.name.localeCompare(b.name);
   });
   return (
-    <div className="px-3 py-2 border-b border-[#1f1f2e] flex flex-wrap gap-1.5">
+    <div className="rp-members px-3 py-2 border-b border-[#1f1f2e] flex flex-wrap gap-1.5">
       {ordered.map((m) => (
         <div
           key={m._id}
@@ -153,7 +153,7 @@ export function EventLog({
   }, [events.length]);
 
   return (
-    <div className="flex-1 min-h-0 scrollable px-4 py-3 space-y-2 selectable">
+    <div className="rp-log flex-1 min-h-0 scrollable px-4 py-3 space-y-2 selectable">
       {events.map((e) => {
         const custom = renderEvent?.(e);
         if (custom !== undefined) return <div key={e._id}>{custom}</div>;
@@ -166,25 +166,25 @@ export function EventLog({
 
 export function DefaultEvent({ e }: { e: RoomEvent }) {
   if (e.type === 'system') {
-    return <div className="text-xs text-[#8b8fa3] italic">{e.body}</div>;
+    return <div className="rp-event-system text-xs text-[#8b8fa3] italic">{e.body}</div>;
   }
   if (e.type === 'dice') {
     return (
-      <div className="text-xs font-mono text-amber-200 bg-amber-900/20 rounded px-2 py-1">
+      <div className="rp-event-dice text-xs font-mono text-amber-200 bg-amber-900/20 rounded px-2 py-1">
         🎲 <span className="text-[#e2e8f0]">{e.actorName}</span> {e.body}
       </div>
     );
   }
   if (e.type === 'research') {
     return (
-      <div className="text-xs text-sky-200 bg-sky-900/20 rounded px-2 py-1 whitespace-pre-wrap">
+      <div className="rp-event-research text-xs text-sky-200 bg-sky-900/20 rounded px-2 py-1 whitespace-pre-wrap">
         🔎 {e.body}
       </div>
     );
   }
   if (e.type === 'host') {
     return (
-      <div className="text-sm">
+      <div className="rp-event-host text-sm">
         <span className="font-semibold text-amber-300">{e.actorName}</span>{' '}
         <span className="whitespace-pre-wrap">{e.body}</span>
       </div>
@@ -192,13 +192,13 @@ export function DefaultEvent({ e }: { e: RoomEvent }) {
   }
   if (e.type === 'action') {
     return (
-      <div className="text-sm italic text-[#c7cbe0]">
+      <div className="rp-event-action text-sm italic text-[#c7cbe0]">
         <span className="font-semibold not-italic">{e.actorName}</span> {e.body}
       </div>
     );
   }
   return (
-    <div className="text-sm">
+    <div className="rp-event-say text-sm">
       <span className="font-semibold">{e.actorName}</span>{' '}
       <span className="whitespace-pre-wrap">{e.body}</span>
     </div>
@@ -232,7 +232,7 @@ export function SayBox({
   };
 
   return (
-    <form onSubmit={submit} className="p-3 border-t border-[#1f1f2e] flex gap-2">
+    <form onSubmit={submit} className="rp-say p-3 border-t border-[#1f1f2e] flex gap-2">
       <input
         value={text}
         onChange={(e) => setText(e.target.value)}

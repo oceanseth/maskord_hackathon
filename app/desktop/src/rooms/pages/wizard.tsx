@@ -6,6 +6,7 @@ import { useWizard } from '../wizard/useWizard';
 import { Lobby } from '../wizard/Lobby';
 import { GamePanel, SheetModal } from '../wizard/GamePanel';
 import { useAppStore } from '../../store/app';
+import '../wizard/theme.css';
 
 function WizardRoom({ identity }: { identity: RoomIdentity }) {
   const room = useRoom({ kind: 'wizard', title: "The Wizard's Table", identity });
@@ -20,7 +21,7 @@ function WizardRoom({ identity }: { identity: RoomIdentity }) {
         <span className="text-[#8b8fa3]">
           {wiz.capabilities.inference ? `AI via ${wiz.capabilities.via ?? 'deployment'}` : 'No AI key yet — masks play on a simple policy'}
         </span>
-        <a className="ml-auto underline text-sky-300" href={`/wizardmap.html${window.location.search}`} target="_blank" rel="noreferrer">Open map screen ↗</a>
+        <a className="ml-auto underline text-sky-300" href={`/wizardmap.html${window.location.search}`} target="_blank" rel="noreferrer">Map screen</a>
         {wiz.mySeatKey && <button className="px-2 py-0.5 rounded bg-[#2a2a3e] hover:bg-[#3a3a5e]" onClick={() => setSheetFor(identity.key)}>My sheet</button>}
         {wiz.phase !== 'lobby' && status === 'running' && <button className="px-2 py-0.5 rounded bg-[#2a2a3e] hover:bg-[#3a3a5e]" onClick={() => wiz.pause('looking at a character sheet')}>Pause</button>}
         {status === 'paused' && <button className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600" onClick={() => wiz.resume()}>Resume</button>}
@@ -48,4 +49,4 @@ function WizardRoom({ identity }: { identity: RoomIdentity }) {
   );
 }
 
-mountRoomPage(<RoomShell width="w-[480px]" render={(identity) => <WizardRoom identity={identity} />} />);
+mountRoomPage(<RoomShell width="w-[480px]" panelClassName="kf" render={(identity) => <WizardRoom identity={identity} />} />);

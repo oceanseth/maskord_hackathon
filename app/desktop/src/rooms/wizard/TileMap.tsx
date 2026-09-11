@@ -15,6 +15,7 @@ export function TileMap({
   onSquare,
   cell = 28,
   labels = true,
+  theme,
 }: {
   map: TileMapData;
   characters: CharacterState[];
@@ -26,6 +27,8 @@ export function TileMap({
   onSquare?: (p: Position) => void;
   cell?: number;
   labels?: boolean;
+  /** 'kf' desaturates the ground to torchlit stone and lets the active token glow. */
+  theme?: 'kf';
 }) {
   const tokens = new Map<string, { kind: 'pc' | 'npc'; label: string; title: string; hp: number; hpMax: number; id: string; down: boolean }>();
   for (const c of characters) {
@@ -64,26 +67,32 @@ export function TileMap({
               onClick={onSquare ? () => onSquare({ x, y }) : undefined}
               className={`relative flex items-center justify-center ${onSquare && reach ? 'cursor-pointer' : ''}`}
               style={{
-                background: tileColor(t),
+                background: tileColor(t, theme),
                 boxShadow: 'inset 0 0 0 0.5px rgba(0,0,0,0.35)',
                 outline: reach ? '2px solid rgba(56,189,248,0.7)' : undefined,
                 outlineOffset: -2,
               }}
             >
               {burning.has(k) && <span className="absolute inset-0 flex items-center justify-center opacity-90">🔥</span>}
+              {token && theme && labels && (
+                <div className="absolute left-1 right-1" style={{ bottom: 1, height: 2, background: 'rgba(0,0,0,0.6)' }}>
+                  <div style={{ width: `${Math.max(0, Math.min(100, (token.hp / token.hpMax) * 100))}%`, height: '100%', background: token.hp / token.hpMax > 0.5 ? '#6b7a5e' : token.hp / token.hpMax > 0.25 ? '#c9a35a' : '#7a2f2a' }} />
+                </div>
+              )}
               {token && (
                 <div
-                  className={`relative flex items-center justify-center rounded-full font-bold text-white ${token.down ? 'opacity-50' : ''}`}
+                  className={`relative flex items-center justify-center font-bold text-white ${theme ? '' : 'rounded-full'} ${token.down ? 'opacity-50' : ''} ${isActive && theme ? 'kf-token-active' : ''}`}
                   style={{
                     width: cell * 0.82,
                     height: cell * 0.82,
-                    background: token.kind === 'pc' ? '#1d4ed8' : '#4c1d95',
-                    border: isActive ? '2px solid #fbbf24' : '1px solid rgba(255,255,255,0.35)',
-                    boxShadow: isActive ? '0 0 0 3px rgba(251,191,36,0.35)' : undefined,
+                    background: theme ? (token.kind === 'pc' ? '#2f3d3a' : '#4a2a2a') : token.kind === 'pc' ? '#1d4ed8' : '#4c1d95',
+                    border: theme ? (isActive ? '1px solid #c9a35a' : '1px solid #8a6a3a') : isActive ? '2px solid #fbbf24' : '1px solid rgba(255,255,255,0.35)',
+                    boxShadow: theme ? (isActive ? undefined : 'inset 1px 1px 0 rgba(255,255,255,0.15), inset -1px -1px 0 rgba(0,0,0,0.6)') : isActive ? '0 0 0 3px rgba(251,191,36,0.35)' : undefined,
+                    transform: theme ? 'rotate(45deg) scale(0.8)' : undefined,
                   }}
                 >
-                  <span style={{ fontSize: cell * 0.42, lineHeight: 1 }}>{token.down ? '✕' : token.label}</span>
-                  {labels && (
+                  <span style={{ fontSize: cell * 0.42, lineHeight: 1, transform: theme ? 'rotate(-45deg) scale(1.2)' : undefined }}>{token.down ? '✕' : token.label}</span>
+                  {labels && !theme && (
                     <div className="absolute left-0 right-0" style={{ bottom: -3, height: 3, background: 'rgba(0,0,0,0.5)' }}>
                       <div style={{ width: `${Math.max(0, Math.min(100, (token.hp / token.hpMax) * 100))}%`, height: '100%', background: token.hp / token.hpMax > 0.5 ? '#22c55e' : token.hp / token.hpMax > 0.25 ? '#f59e0b' : '#ef4444' }} />
                     </div>
@@ -98,7 +107,17 @@ export function TileMap({
   );
 }
 
-function tileColor(t: string): string {
+function tileColor(t: string, theme?: 'kf'): string {
+  if (theme === 'kf') {
+    switch (t) {
+      case '~': return '#141c24';
+      case '.': return '#4d4331';
+      case '#': return '#221f1c';
+      case '=': return '#3a2c1c';
+      case ':': return '#3c3a33';
+      default: return '#0b0a0c';
+    }
+  }
   switch (t) {
     case '~': return '#1e3a5f';
     case '.': return '#c2a15b';
