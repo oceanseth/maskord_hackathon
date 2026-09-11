@@ -806,7 +806,7 @@ async function perform(ctx: MutationCtx, room: Doc<'rooms'>, game: Game, c: Char
       for (const zk of provokers) {
         const z = livingEnemies(game).find((x) => x.key === zk)!;
         await host(ctx, room, `${z.name} lashes out as ${c.name} pulls away — opportunity attack.`);
-        await monsterAttack(ctx, room, game, z, c);
+        await monsterAttack(ctx, room, z, c);
         if (isDown(c)) break;
       }
       if (fires.some((f) => f.pos.x === c.pos.x && f.pos.y === c.pos.y)) {
@@ -1131,14 +1131,14 @@ export const monsterTurn = internalMutation({
         return await advance(ctx, room, game);
       }
     }
-    await monsterAttack(ctx, room, game, z, target);
+    await monsterAttack(ctx, room, z, target);
     await save(ctx, game);
     if (await checkEnd(ctx, room, game)) return;
     return await advance(ctx, room, game);
   },
 });
 
-async function monsterAttack(ctx: MutationCtx, room: Doc<'rooms'>, game: Game, z: CreatureState, target: CharacterState) {
+async function monsterAttack(ctx: MutationCtx, room: Doc<'rooms'>, z: CreatureState, target: CharacterState) {
   const slam = STAT_BLOCKS[z.statKey].attacks[0];
   const dis = target.conditions.includes('dodging');
   const res = resolveAttack(rng, slam, characterAC(target), { dis, autoCrit: isDown(target) });
