@@ -5,6 +5,10 @@ import { RoomShell, mountRoomPage } from '../RoomShell';
 import { RoomPanel } from '../RoomPanel';
 import { useRoom, type RoomEvent, type RoomIdentity } from '../useRoom';
 import { useMaskyAvatars } from '../../hooks/useMaskyAvatars';
+import { useMaskordPro } from '../../hooks/useMaskordPro';
+import PaywallModal from '../../components/pro/PaywallModal';
+import GuestStarShelf from '../../components/pro/GuestStarShelf';
+import ProPanelModal from '../../components/pro/ProPanelModal';
 
 /**
  * The debate table. Masks argue the motion in character, fact-check each other
@@ -46,6 +50,13 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
   const seated = new Set(room.masks.map((m) => m.memberKey));
   const onTheFloor = (debate?.order ?? []).includes(identity.key);
 
+  // Maskord Pro: seating a mask somebody *else* published is the paid feature.
+  // Your own masks and the house panel stay free, so a judge with no account
+  // still gets a debate.
+  const pro = useMaskordPro(identity.key);
+  const [paywallFor, setPaywallFor] = useState<string | null>(null);
+  const [proPanelOpen, setProPanelOpen] = useState(false);
+
   const [topic, setTopic] = useState('');
   const [claim, setClaim] = useState('');
   const [starting, setStarting] = useState(false);
@@ -66,12 +77,28 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
   }, [status, room.slug, advance]);
 
   return (
+    <>
     <RoomPanel
       room={room}
       placeholder="Make your point…"
       renderEvent={renderDebateEvent}
       header={
         <div className="px-4 py-3 border-b border-[#1f1f2e] space-y-2">
+          {/* Status and the rent-out shelf. Shown to everyone: an unsubscribed
+              visitor needs somewhere to see what Pro is before the padlock. */}
+          <div className="flex justify-end">
+            <button
+              onClick={() => setProPanelOpen(true)}
+              className={
+                pro.pro
+                  ? 'text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-violet-900/50 border border-violet-700/50 text-violet-200'
+                  : 'text-[10px] uppercase tracking-wide px-2 py-0.5 rounded-full bg-[#1e1e2e] border border-[#2a2a3e] text-[#6b7280] hover:text-[#cbd5e1]'
+              }
+            >
+              {pro.pro ? 'Pro' : 'Maskord Pro'}
+            </button>
+          </div>
+
           {caps && (!caps.inference || !caps.research) && (
             <div className="text-xs rounded border border-amber-700/40 bg-amber-900/20 text-amber-200 px-3 py-2">
               {!caps.inference
@@ -153,6 +180,21 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
                     </button>
                   ))}
               </div>
+
+              <GuestStarShelf
+                pro={pro.pro}
+                seated={seated}
+                onSeat={(mask) =>
+                  seatMask({
+                    slug: room.slug,
+                    memberKey: mask.memberKey,
+                    name: mask.name,
+                    persona: mask.persona,
+                    avatarUrl: mask.avatarUrl,
+                  })
+                }
+                onLocked={setPaywallFor}
+              />
 
               <div className="flex gap-2">
                 <input
@@ -237,6 +279,31 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
         )
       }
     />
+    {proPanelOpen && (
+      <ProPanelModal
+        uid={identity.key}
+        displayName={identity.name}
+        pro={pro}
+        onUpgrade={() => {
+          setProPanelOpen(false);
+          setPaywallFor('');
+        }}
+        onClose={() => setProPanelOpen(false)}
+      />
+    )}
+    {paywallFor !== null && (
+      <PaywallModal
+        offering={pro.offering}
+        blockedBy={paywallFor}
+        lapsed={pro.lapsed}
+        onPurchased={() => {
+          void pro.refresh();
+          setPaywallFor(null);
+        }}
+        onClose={() => setPaywallFor(null)}
+      />
+    )}
+    </>
   );
 }
 
