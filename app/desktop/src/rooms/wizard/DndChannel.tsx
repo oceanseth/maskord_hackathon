@@ -39,7 +39,11 @@ export default function DndChannel({ guildId, channelId }: Props) {
   const channels = useGuildChannels(guildId);
   const channelName = channels.find((c) => c.id === channelId)?.name ?? '';
   const slug = channelRoomSlug(channelId);
-  const room = useRoom({ kind: 'wizard', slug, title: channelName ? `#${channelName}` : "The Wizard's Table", identity });
+  // The guild is known from the first render, so the room carries it from
+  // creation rather than from `start`: the bridge that mirrors lines into the
+  // channel reads it from the room's config.
+  const config = useMemo(() => ({ guildId }), [guildId]);
+  const room = useRoom({ kind: 'wizard', slug, title: channelName ? `#${channelName}` : "The Wizard's Table", config, identity });
   const wiz = useWizard(room);
   const status = room.room?.status ?? 'lobby';
   const [sheetFor, setSheetFor] = useState<string | null>(null);
@@ -148,6 +152,9 @@ export default function DndChannel({ guildId, channelId }: Props) {
 
 // ─── The feed ─────────────────────────────────────────────────────────────────
 
+/** Event types the bridge mirrors into the channel; keep in step with `MIRRORED` in `www/convex/rooms.ts`. */
+const MIRRORED: ReadonlySet<RoomEvent['type']> = new Set(['say', 'action', 'host', 'research']);
+
 type FeedItem = { at: number; key: string } & ({ kind: 'message'; message: Message } | { kind: 'event'; event: RoomEvent });
 
 function Feed({
@@ -171,20 +178,30 @@ function Feed({
 
   const items = useMemo<FeedItem[]>(() => {
     // A person's own words already arrive as a channel message; the `say`
-    // event `askDm` records for the DM would show them twice. Masks and the
-    // DM have no channel message, so their lines stay.
+    // event `askDm` records for the DM would show them twice.
     const humans = new Set(humanKeys);
     const fromEvents: FeedItem[] = events
       .filter((e) => !(e.type === 'say' && e.actorKey && humans.has(e.actorKey)))
       .map((e) => ({ kind: 'event', at: e._creationTime, key: `e:${e._id}`, event: e }));
-    const fromMessages: FeedItem[] = messages.map((m) => ({
-      kind: 'message',
-      at: m.createdAt ? m.createdAt.toMillis() : Date.now(),
-      key: `m:${m.id}`,
-      message: m,
-    }));
+    // Mask and DM lines are mirrored into the channel as messages by a bot
+    // author (`bot:<guildId>:…`) so they reach history and notifications. Here
+    // the event is already on screen in transcript form, so a mirror whose
+    // text matches a loaded event is skipped. Lines older than the loaded
+    // events have no event to clash with and show as ordinary messages.
+    const mirrored = new Set(
+      events.filter((e) => MIRRORED.has(e.type) && !(e.actorKey && humans.has(e.actorKey))).map((e) => e.body),
+    );
+    const botPrefix = `bot:${guildId}:`;
+    const fromMessages: FeedItem[] = messages
+      .filter((m) => !(m.authorId.startsWith(botPrefix) && mirrored.has(m.content)))
+      .map((m) => ({
+        kind: 'message',
+        at: m.createdAt ? m.createdAt.toMillis() : Date.now(),
+        key: `m:${m.id}`,
+        message: m,
+      }));
     return [...fromMessages, ...fromEvents].sort((a, b) => a.at - b.at);
-  }, [events, messages, humanKeys]);
+  }, [events, messages, humanKeys, guildId]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' });
