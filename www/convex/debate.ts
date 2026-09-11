@@ -8,7 +8,7 @@ import {
   query,
 } from './_generated/server';
 import { api, internal } from './_generated/api';
-import { TURN_CLAIM_TTL_MS, getRoomBySlug, joinMember } from './rooms';
+import { TURN_CLAIM_TTL_MS, appendEvent, getRoomBySlug, joinMember } from './rooms';
 import { HOUSE_MASKS } from './wizard/scenario';
 import { callModel, hasInference, judgeModel } from './agent';
 import type { Doc, Id } from './_generated/dataModel';
@@ -192,6 +192,48 @@ async function addToOrder(ctx: MutationCtx, roomId: Id<'rooms'>, memberKey: stri
   await ctx.db.patch(roomId, { config: { ...(room.config ?? {}), order: [...order, memberKey] } });
 }
 
+/**
+ * A human joining or leaving the speaking order. Spectating is the default —
+ * you can watch, heckle and fact-check without ever holding the floor — and
+ * this is the opt-in. Scoring follows automatically: the judge is handed every
+ * non-host member, so a human who argued is judged on the same four criteria
+ * as the masks.
+ */
+export const takeFloor = mutation({
+  args: { slug: v.string(), memberKey: v.string() },
+  handler: async (ctx, { slug, memberKey }) => {
+    const room = await getRoomBySlug(ctx, slug);
+    if (!room) throw new Error('no such room');
+    const member = await ctx.db
+      .query('roomMembers')
+      .withIndex('by_room_member', (q) => q.eq('roomId', room._id).eq('memberKey', memberKey))
+      .unique();
+    if (!member) throw new Error('join the room first');
+    await addToOrder(ctx, room._id, memberKey);
+    await appendEvent(ctx, room._id, {
+      type: 'system',
+      actorKey: memberKey,
+      actorName: member.name,
+      body: `${member.name} joined the debate.`,
+      data: { kind: 'floor-join' },
+    });
+    return { onTheFloor: true as const };
+  },
+});
+
+export const leaveFloor = mutation({
+  args: { slug: v.string(), memberKey: v.string() },
+  handler: async (ctx, { slug, memberKey }) => {
+    const room = await getRoomBySlug(ctx, slug);
+    if (!room) throw new Error('no such room');
+    const cfg = config(room);
+    await ctx.db.patch(room._id, {
+      config: { ...(room.config ?? {}), order: (cfg.order ?? []).filter((k) => k !== memberKey) },
+    });
+    return { onTheFloor: false as const };
+  },
+});
+
 /** Seat the whole house panel at once. Idempotent. */
 export const seatHouseCast = mutation({
   args: { slug: v.string() },
@@ -265,14 +307,18 @@ export const start = action({
 
     const rules = drawRules();
 
-    // Nobody has seated a debater, so seat the house panel rather than opening
-    // a debate with an empty floor. A judge presses one button and gets a
-    // debate; bringing your own masks still wins, because they are already in
-    // `speakerKeys` by the time this runs.
-    let order = room.speakerKeys;
-    if (order.length === 0) {
+    // Build the order from everyone already signed up — humans who took the
+    // floor before the motion was set are in `existing.order` and must survive,
+    // which they did not when this rebuilt the list from masks alone.
+    const already = existing.order ?? [];
+    let order = [...already, ...room.speakerKeys.filter((k) => !already.includes(k))];
+
+    // Seat the house panel when no mask is on the floor — keyed on masks, not
+    // on the order being empty, because a lone human who took the floor would
+    // otherwise open a debate against nobody. A debate needs opponents.
+    if (room.speakerKeys.length === 0) {
       await ctx.runMutation(api.debate.seatHouseCast, { slug });
-      order = HOUSE_MASKS.map((m) => m.key);
+      order = [...order, ...HOUSE_MASKS.map((m) => m.key).filter((k) => !order.includes(k))];
     }
 
     await ctx.runMutation(internal.debate.applyConfig, {
@@ -403,8 +449,26 @@ export const takeTurn = internalMutation({
     const others = (
       await ctx.db.query('roomMembers').withIndex('by_room', (q) => q.eq('roomId', roomId)).collect()
     )
-      .filter((m) => m.kind === 'mask' && m.memberKey !== memberKey)
+      .filter((m) => m.kind !== 'host' && m.memberKey !== memberKey)
       .map((m) => m.name);
+
+    // A human on the floor is invited to speak, never spoken for. Without this
+    // the model would argue *as* them the moment they joined the order, which
+    // is the opposite of taking part. Their window is the turn lease: say
+    // something before it expires and it lands in the transcript the judge
+    // reads; stay quiet and the floor moves on, so one idle spectator cannot
+    // stall the debate.
+    if (member.kind === 'human') {
+      await appendEvent(ctx, roomId, {
+        type: 'host',
+        actorKey: 'host',
+        actorName: room.hostName,
+        body: `${member.name}, the floor is yours.`,
+        data: { kind: 'floor', memberKey, round },
+      });
+      await advanceCursor(ctx, roomId, order.length, cursor, round);
+      return;
+    }
 
     await ctx.scheduler.runAfter(0, internal.agent.runTurn, {
       roomId,
@@ -417,19 +481,33 @@ export const takeTurn = internalMutation({
       turnToken: room.turn.seq,
     });
 
-    // Advance the cursor now rather than after the model replies: the next
-    // scheduled turn is driven by `continue`, and a crashed turn should not
-    // wedge the debate on one speaker forever.
-    const nextCursor = cursor + 1;
-    await ctx.db.patch(roomId, {
-      config: {
-        ...(room.config ?? {}),
-        cursor: nextCursor % order.length,
-        round: nextCursor >= order.length ? round + 1 : round,
-      },
-    });
+    await advanceCursor(ctx, roomId, order.length, cursor, round);
   },
 });
+
+/**
+ * Advance the cursor when a turn is *handed out*, not when it comes back.
+ * A turn that never answers — a failed model call, a human who says nothing —
+ * must not wedge the debate on one speaker.
+ */
+async function advanceCursor(
+  ctx: MutationCtx,
+  roomId: Id<'rooms'>,
+  size: number,
+  cursor: number,
+  round: number,
+) {
+  const room = await ctx.db.get(roomId);
+  if (!room) return;
+  const next = cursor + 1;
+  await ctx.db.patch(roomId, {
+    config: {
+      ...(room.config ?? {}),
+      cursor: next % size,
+      round: next >= size ? round + 1 : round,
+    },
+  });
+}
 
 /**
  * Tool calls from a debater. Research is the only one the debate offers — the

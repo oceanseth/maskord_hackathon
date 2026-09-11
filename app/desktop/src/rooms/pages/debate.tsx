@@ -37,11 +37,14 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
   const seatMask = useMutation(api.debate.seatMask);
   const unseatMask = useMutation(api.debate.unseatMask);
   const seatHouseCast = useMutation(api.debate.seatHouseCast);
+  const takeFloor = useMutation(api.debate.takeFloor);
+  const leaveFloor = useMutation(api.debate.leaveFloor);
 
   // Your own masks, so the panel is your characters rather than ours. Same
   // source the Maskord client uses for its AI assistance tab.
   const { avatarGroups } = useMaskyAvatars(identity.key);
   const seated = new Set(room.masks.map((m) => m.memberKey));
+  const onTheFloor = (debate?.order ?? []).includes(identity.key);
 
   const [topic, setTopic] = useState('');
   const [claim, setClaim] = useState('');
@@ -186,6 +189,26 @@ function DebateRoom({ identity }: { identity: RoomIdentity }) {
               placeholder="Challenge a claim — the room will go and check it"
               className="flex-1 px-3 py-1.5 rounded bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-xs outline-none"
             />
+            {/* Spectating is the default; this is the opt-in to being judged. */}
+            <button
+              onClick={() =>
+                onTheFloor
+                  ? leaveFloor({ slug: room.slug, memberKey: identity.key })
+                  : takeFloor({ slug: room.slug, memberKey: identity.key })
+              }
+              className={`text-xs px-3 py-1.5 rounded shrink-0 ${
+                onTheFloor
+                  ? 'bg-violet-700 hover:bg-violet-600 text-white'
+                  : 'bg-[#2a2a3e] hover:bg-[#3a3a5e] text-[#cbd5e1]'
+              }`}
+              title={
+                onTheFloor
+                  ? 'Leave the speaking order — you can still watch and fact-check'
+                  : 'Join the speaking order and be scored alongside the masks'
+              }
+            >
+              {onTheFloor ? 'On the floor' : 'Take the floor'}
+            </button>
             <button
               disabled={!claim.trim() || !caps?.research}
               title={caps?.research ? undefined : 'Needs LINKUP_API_KEY'}
