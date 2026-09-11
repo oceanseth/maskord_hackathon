@@ -47,6 +47,12 @@ jobs:
         working-directory: www
         env:
           CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+          # The guest button in AuthScreen stays hidden unless this is set at
+          # build time, so it has to reach vite here or the deployed site ships
+          # the code with the button switched off. Not a secret — an invite code
+          # is meant to be handed out. Set the DEFAULT_INVITE_CODE repository
+          # variable to a permanent, unlimited invite for the shared server.
+          VITE_DEFAULT_INVITE_CODE: ${{ vars.DEFAULT_INVITE_CODE }}
         run: |
           npx convex deploy
           npm run build

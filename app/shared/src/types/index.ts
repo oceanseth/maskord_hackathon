@@ -33,6 +33,11 @@ export interface GuildSettings {
   defaultNotifications: 'all' | 'mentions';
   explicitContentFilter: 'disabled' | 'members_without_roles' | 'all_members';
   verificationLevel: 'none' | 'low' | 'medium' | 'high';
+  /** Lets guests (anonymous sign-ins) join through an invite. Off unless the
+   *  owner turns it on, and enforced in the join Cloud Functions — a guest can
+   *  hold a valid session without every server having to accept them.
+   *  Absent on servers created before the setting existed, which read as off. */
+  allowGuests?: boolean;
 }
 
 export interface Guild {

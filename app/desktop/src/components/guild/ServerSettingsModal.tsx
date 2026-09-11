@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { updateGuildSettings, uploadGuildIcon, createInvite } from '@maskord/shared';
+import { updateGuildSettings, setGuildAllowGuests, uploadGuildIcon, createInvite } from '@maskord/shared';
 import Modal from '../ui/Modal';
 import AIAssistanceTab from './AIAssistanceTab';
 import { inviteUrl as buildInviteUrl } from '../../lib/appUrl';
@@ -8,13 +8,14 @@ interface Props {
   guildId: string;
   currentName: string;
   currentIconUrl: string;
+  currentAllowGuests: boolean;
   inviterId: string;
   onClose: () => void;
 }
 
 type Tab = 'overview' | 'ai';
 
-export default function ServerSettingsModal({ guildId, currentName, currentIconUrl, inviterId, onClose }: Props) {
+export default function ServerSettingsModal({ guildId, currentName, currentIconUrl, currentAllowGuests, inviterId, onClose }: Props) {
   const [tab, setTab] = useState<Tab>('overview');
 
   // ─── Name ────────────────────────────────────────────────────────────────────
@@ -67,6 +68,29 @@ export default function ServerSettingsModal({ guildId, currentName, currentIconU
       URL.revokeObjectURL(localUrl);
       // Reset input so same file can be re-selected
       if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  }
+
+  // ─── Guests ───────────────────────────────────────────────────────────────
+  // Guests are anonymous sign-ins with no way back into the account, so this is
+  // off by default and the join Cloud Functions enforce it. Saves immediately —
+  // a toggle that needs a separate Save button reads as already applied.
+  const [allowGuests, setAllowGuests]       = useState(currentAllowGuests);
+  const [guestsSaving, setGuestsSaving]     = useState(false);
+  const [guestsError, setGuestsError]       = useState<string | null>(null);
+
+  async function handleAllowGuestsChange(next: boolean) {
+    const previous = allowGuests;
+    setAllowGuests(next); // optimistic
+    setGuestsSaving(true);
+    setGuestsError(null);
+    try {
+      await setGuildAllowGuests(guildId, next);
+    } catch (err) {
+      setAllowGuests(previous);
+      setGuestsError(err instanceof Error ? err.message : 'Failed to save');
+    } finally {
+      setGuestsSaving(false);
     }
   }
 
@@ -206,6 +230,33 @@ export default function ServerSettingsModal({ guildId, currentName, currentIconU
             </button>
           </div>
         </form>
+
+        <div className="h-px bg-[#1e1e2e]" />
+
+        {/* ── Guests ── */}
+        <div>
+          <label className="flex items-start gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={allowGuests}
+              disabled={guestsSaving}
+              onChange={(e) => handleAllowGuestsChange(e.target.checked)}
+              className="mt-0.5 w-4 h-4 shrink-0 rounded accent-violet-600 disabled:opacity-50"
+            />
+            <span>
+              <span className="block text-sm text-white">Allow guests</span>
+              <span className="block mt-1 text-xs text-[#6b7280]">
+                Lets people join this server with the guest button instead of an
+                account. They can look around and take part, but they lose access
+                for good once they close the browser — there are no credentials to
+                sign back in with.
+              </span>
+            </span>
+          </label>
+          {guestsError && (
+            <p className="mt-2 text-xs text-red-400">{guestsError}</p>
+          )}
+        </div>
 
         <div className="h-px bg-[#1e1e2e]" />
 

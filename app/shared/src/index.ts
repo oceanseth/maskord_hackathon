@@ -13,7 +13,7 @@ export { DEFAULT_CLAUDE_AVATAR } from './constants/claudeAvatar';
 
 // Hooks
 export { useAuth } from './hooks/useAuth';
-export { useUserGuilds, useGuild, useGuildMembers, useGuildRoles, useGuildChannels, createGuild, updateGuildSettings, uploadGuildIcon, deleteGuild, leaveGuild, createChannel, updateChannel, deleteChannel, createInvite, joinViaInvite, joinGuildAsMutualFriend } from './hooks/useGuild';
+export { useUserGuilds, useGuild, useGuildMembers, useGuildRoles, useGuildChannels, createGuild, updateGuildSettings, setGuildAllowGuests, uploadGuildIcon, deleteGuild, leaveGuild, createChannel, updateChannel, deleteChannel, createInvite, joinViaInvite, joinGuildAsMutualFriend } from './hooks/useGuild';
 export { useMessages, sendMessage, editMessage, deleteMessage, toggleReaction } from './hooks/useMessages';
 export { usePresence, updateActiveContext } from './hooks/usePresence';
 export { useUserProfiles } from './hooks/useUsers';
