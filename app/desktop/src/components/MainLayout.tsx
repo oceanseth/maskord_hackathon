@@ -30,7 +30,10 @@ export default function MainLayout() {
   // tuple is set from eight call sites that have no reason to learn about modes.
   const channels = useGuildChannels(activeGuildId ?? null);
   const mode = channels.find((c: Channel) => c.id === activeChannelId)?.mode ?? 'default';
-  const isGameChannel = activeChannelType === 'text' && mode !== 'default';
+  // Voice counts too: `setVoiceChannel` joins the call from the sidebar, and
+  // what the main pane draws is independent of it — so a voice game channel
+  // keeps its audio and shows the table instead of a grid of avatars.
+  const isGameChannel = mode !== 'default' && (activeChannelType === 'text' || activeChannelType === 'voice');
 
   // On mobile we render either the sidebars OR the active content pane, never
   // both — otherwise three flex columns get crushed into ~50px each.
@@ -116,7 +119,7 @@ export default function MainLayout() {
             {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelId && isGameChannel && (
               <ChannelGameView guildId={activeGuildId} channelId={activeChannelId} mode={mode} />
             )}
-            {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelType === 'voice' && activeChannelId && (
+            {!activeDmPartnerId && activeView === 'guild' && activeGuildId && activeChannelType === 'voice' && activeChannelId && !isGameChannel && (
               <VoiceChannel guildId={activeGuildId} channelId={activeChannelId} />
             )}
             {!activeDmPartnerId && activeView === 'guild' && activeGuildId && !activeChannelId && !isMobile && (
