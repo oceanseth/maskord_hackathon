@@ -9,7 +9,7 @@ import {
 } from './_generated/server';
 import { api, internal } from './_generated/api';
 import { TURN_CLAIM_TTL_MS, appendEvent, getRoomBySlug, joinMember } from './rooms';
-import { HOUSE_MASKS } from './wizard/scenario';
+import { HOUSE_MASKS } from './cast';
 import { callModel, hasInference, judgeModel } from './agent';
 import { RENTED_PREFIX } from './rentable';
 import type { Doc, Id } from './_generated/dataModel';
