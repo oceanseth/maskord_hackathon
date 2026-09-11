@@ -1,18 +1,30 @@
 import { useState } from 'react';
+import type { ChannelMode } from '@maskord/shared';
 import Modal from '../ui/Modal';
 
 type ChannelKind = 'text' | 'voice' | 'category';
+
+/** Modes a channel can be created in. `debate` follows once it moves in-channel. */
+const MODES: { value: ChannelMode; label: string; desc: string }[] = [
+  { value: 'default', label: 'Default', desc: 'An ordinary text channel.' },
+  {
+    value: 'dnd',
+    label: 'D&D table',
+    desc: 'The channel becomes a game board. Messages are what the party says at the table.',
+  },
+];
 
 interface Props {
   defaultType?: ChannelKind;
   categoryId?: string | null;
   onClose: () => void;
-  onCreate: (name: string, type: ChannelKind, parentId: string | null) => Promise<void>;
+  onCreate: (name: string, type: ChannelKind, parentId: string | null, mode: ChannelMode) => Promise<void>;
 }
 
 export default function CreateChannelModal({ defaultType = 'text', categoryId = null, onClose, onCreate }: Props) {
   const [name, setName] = useState('');
   const [type, setType] = useState<ChannelKind>(defaultType);
+  const [mode, setMode] = useState<ChannelMode>('default');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +34,14 @@ export default function CreateChannelModal({ defaultType = 'text', categoryId = 
     setLoading(true);
     setError(null);
     try {
-      await onCreate(name.trim().toLowerCase().replace(/\s+/g, '-'), type, categoryId);
+      // A mode only means anything on a text channel; a voice channel or a
+      // category carrying one would be a lie the settings panel then shows.
+      await onCreate(
+        name.trim().toLowerCase().replace(/\s+/g, '-'),
+        type,
+        categoryId,
+        type === 'text' ? mode : 'default',
+      );
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create channel');
@@ -120,6 +139,30 @@ export default function CreateChannelModal({ defaultType = 'text', categoryId = 
             />
           </div>
         </div>
+
+        {/* Mode — text channels only. A voice channel or a category has no view
+            to replace, so offering it there would be a setting that does nothing. */}
+        {type === 'text' && (
+          <div>
+            <label className="block text-xs font-semibold text-[#94a3b8] uppercase tracking-wide mb-1.5">
+              Mode
+            </label>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as ChannelMode)}
+              className="w-full px-3 py-2.5 rounded-lg bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none transition-colors"
+            >
+              {MODES.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-xs text-[#6b7280]">
+              {MODES.find((m) => m.value === mode)?.desc}
+            </p>
+          </div>
+        )}
 
         {error && (
           <p className="text-red-400 text-xs bg-red-900/20 border border-red-800/30 rounded-lg px-3 py-2">{error}</p>

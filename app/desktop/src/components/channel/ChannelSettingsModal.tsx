@@ -4,7 +4,7 @@ import {
   updateChannel,
   DEFAULT_CLAUDE_AVATAR,
 } from '@maskord/shared';
-import type { Channel } from '@maskord/shared';
+import type { Channel, ChannelMode } from '@maskord/shared';
 import Modal from '../ui/Modal';
 import { useMaskyAvatars } from '../../hooks/useMaskyAvatars';
 
@@ -26,7 +26,7 @@ export default function ChannelSettingsModal({ guildId, channel, onClose }: Prop
         <TabBtn label="AI Assistance" active={tab === 'ai'}       onClick={() => setTab('ai')} />
       </div>
       <div className="px-6 py-6 max-h-[70vh] overflow-y-auto scrollable">
-        {tab === 'overview' && <OverviewTab channel={channel} />}
+        {tab === 'overview' && <OverviewTab guildId={guildId} channel={channel} />}
         {tab === 'ai'       && <AITab guildId={guildId} channel={channel} />}
       </div>
     </Modal>
@@ -50,11 +50,47 @@ function TabBtn({ label, active, onClick }: { label: string; active: boolean; on
 
 // ─── Overview tab — placeholder for now ───────────────────────────────────────
 
-function OverviewTab({ channel }: { channel: Channel }) {
+function OverviewTab({ guildId, channel }: { guildId: string; channel: Channel }) {
+  const [saving, setSaving] = useState(false);
+  const mode: ChannelMode = channel.mode ?? 'default';
+
+  async function setMode(next: ChannelMode) {
+    if (next === mode) return;
+    setSaving(true);
+    try {
+      await updateChannel(guildId, channel.id, { mode: next });
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
-    <div className="text-sm text-[#6b7280] space-y-2">
+    <div className="text-sm text-[#6b7280] space-y-4">
       <p>Channel topic, slowmode, and permission overwrites will live here.</p>
       <p>Type: <span className="text-[#c8d0e0]">{channel.type}</span></p>
+
+      {/* Switching an existing channel is the useful half: a server already has
+          its channels, and nobody wants to remake one to play. */}
+      {channel.type === 'text' && (
+        <div className="space-y-1.5">
+          <label className="block text-xs font-semibold text-[#94a3b8] uppercase tracking-wide">
+            Mode
+          </label>
+          <select
+            value={mode}
+            disabled={saving}
+            onChange={(e) => void setMode(e.target.value as ChannelMode)}
+            className="w-full px-3 py-2 rounded-lg bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none disabled:opacity-50"
+          >
+            <option value="default">Default</option>
+            <option value="dnd">D&amp;D table</option>
+          </select>
+          <p className="text-xs text-[#6b7280]">
+            The messages stay exactly where they are — only the view over them changes, so
+            switching back leaves the channel as it was.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

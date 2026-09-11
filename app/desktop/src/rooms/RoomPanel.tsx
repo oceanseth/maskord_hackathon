@@ -104,36 +104,68 @@ export function MemberStrip({
     return rank(a) - rank(b) || a.name.localeCompare(b.name);
   });
   return (
-    <div className="rp-members px-3 py-2 border-b border-[#1f1f2e] flex flex-wrap gap-1.5">
+    <div className="rp-members px-3 py-2 border-b border-[#1f1f2e] flex flex-wrap gap-2">
       {ordered.map((m) => (
         <div
           key={m._id}
-          className={`flex items-center gap-1.5 pl-1 pr-2 py-0.5 rounded-full text-xs border ${
-            m.memberKey === meKey ? 'border-sky-500/60' : 'border-[#2a2a3e]'
-          } ${m.present ? '' : 'opacity-50'}`}
-          title={`${m.kind}${m.present ? '' : ' (away)'}`}
+          className={`w-[4.5rem] flex flex-col items-center gap-1 ${m.present ? '' : 'opacity-50'}`}
+          title={`${m.name} — ${m.kind}${m.present ? '' : ' (away)'}`}
         >
-          <Avatar member={m} />
-          <span className="truncate max-w-[9rem]">{m.name}</span>
-          {m.kind === 'host' && <span className="text-[10px] text-amber-300">host</span>}
-          {m.kind === 'mask' && <span className="text-[10px] text-fuchsia-300">mask</span>}
-          {m.kind === 'human' && !m.ready && <span className="text-[10px] text-[#8b8fa3]">not ready</span>}
-          {extra?.(m)}
+          {/* The face is the tile, not a bullet beside a name: this is where a
+              camera, a shared screen or a talking-head stream goes, so it is
+              sized and shaped for one from the start. The ring marks you. */}
+          <div
+            className={`relative rounded-lg overflow-hidden border ${
+              m.memberKey === meKey ? 'border-sky-500/70' : 'border-[#2a2a3e]'
+            }`}
+          >
+            <Avatar member={m} size={56} rounded="rounded-lg" />
+            {m.kind === 'host' && <TileBadge className="bg-amber-600/80">host</TileBadge>}
+            {m.kind === 'mask' && <TileBadge className="bg-fuchsia-700/80">mask</TileBadge>}
+            {m.kind === 'human' && !m.ready && (
+              <TileBadge className="bg-[#2a2a3e]/90">waiting</TileBadge>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 max-w-full">
+            <span className="truncate text-[11px] text-[#c8d0e0]">{m.name}</span>
+            {extra?.(m)}
+          </div>
         </div>
       ))}
     </div>
   );
 }
 
-export function Avatar({ member, size = 18 }: { member: Pick<RoomMember, 'name' | 'avatarUrl' | 'kind'>; size?: number }) {
+/** A corner label on a member tile — kind, or why they are not playing yet. */
+function TileBadge({ children, className }: { children: ReactNode; className: string }) {
+  return (
+    <span
+      className={`absolute bottom-0 inset-x-0 text-[9px] leading-[13px] text-center text-white ${className}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+export function Avatar({
+  member,
+  size = 18,
+  rounded = 'rounded-full',
+}: {
+  member: Pick<RoomMember, 'name' | 'avatarUrl' | 'kind'>;
+  size?: number;
+  /** Square-ish for a tile, round for an inline bullet. */
+  rounded?: string;
+}) {
   if (member.avatarUrl) {
-    return <img src={member.avatarUrl} alt="" width={size} height={size} className="rounded-full object-cover" style={{ width: size, height: size }} />;
+    return <img src={member.avatarUrl} alt="" width={size} height={size} className={`${rounded} object-cover`} style={{ width: size, height: size }} />;
   }
   const bg = member.kind === 'host' ? '#b45309' : member.kind === 'mask' ? '#86198f' : '#1d4ed8';
   return (
     <span
-      className="rounded-full inline-flex items-center justify-center text-[10px] font-semibold text-white"
-      style={{ width: size, height: size, background: bg }}
+      className={`${rounded} inline-flex items-center justify-center font-semibold text-white`}
+      style={{ width: size, height: size, background: bg, fontSize: Math.max(10, Math.round(size / 2.6)) }}
     >
       {member.name.slice(0, 1).toUpperCase()}
     </span>
