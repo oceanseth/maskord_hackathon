@@ -7,10 +7,12 @@ import {
   mutation,
   query,
 } from './_generated/server';
-import { internal } from './_generated/api';
-import { TURN_CLAIM_TTL_MS, getRoomBySlug } from './rooms';
+import { api, internal } from './_generated/api';
+import { TURN_CLAIM_TTL_MS, getRoomBySlug, joinMember } from './rooms';
+import { HOUSE_MASKS } from './wizard/scenario';
 import { callModel, hasInference, judgeModel } from './agent';
 import type { Doc, Id } from './_generated/dataModel';
+import type { MutationCtx } from './_generated/server';
 
 /**
  * The debate mode. Masks argue a topic in character, fact-check each other
@@ -126,6 +128,86 @@ const RESEARCH_TOOL = {
   },
 };
 
+/**
+ * The house panel. Deliberately the same three characters the D&D table seats,
+ * imported rather than re-described: one cast across both rooms reads as one
+ * product, and a persona that has been tuned in one place stays tuned in both.
+ *
+ * A debate needs *someone* on the floor. `order` is built from seated masks, so
+ * before this existed an empty room produced a motion, house rules, and then
+ * silence — no debaters, nothing to advance, key or no key.
+ */
+export const cast = query({
+  args: {},
+  handler: async () => HOUSE_MASKS,
+});
+
+/** Seat one mask as a debater. Used for the house panel and for your own avatar. */
+export const seatMask = mutation({
+  args: {
+    slug: v.string(),
+    memberKey: v.string(),
+    name: v.string(),
+    persona: v.string(),
+    avatarUrl: v.optional(v.string()),
+  },
+  handler: async (ctx, { slug, memberKey, name, persona, avatarUrl }) => {
+    const room = await getRoomBySlug(ctx, slug);
+    if (!room) throw new Error('no such room');
+    await joinMember(ctx, room._id, { memberKey, kind: 'mask', name, persona, avatarUrl });
+    await addToOrder(ctx, room._id, memberKey);
+    return { seated: true as const };
+  },
+});
+
+export const unseatMask = mutation({
+  args: { slug: v.string(), memberKey: v.string() },
+  handler: async (ctx, { slug, memberKey }) => {
+    const room = await getRoomBySlug(ctx, slug);
+    if (!room) throw new Error('no such room');
+    const member = await ctx.db
+      .query('roomMembers')
+      .withIndex('by_room_member', (q) => q.eq('roomId', room._id).eq('memberKey', memberKey))
+      .unique();
+    if (member && member.kind === 'mask') await ctx.db.delete(member._id);
+    const cfg = config(room);
+    await ctx.db.patch(room._id, {
+      config: { ...(room.config ?? {}), order: (cfg.order ?? []).filter((k) => k !== memberKey) },
+    });
+    return { unseated: true as const };
+  },
+});
+
+/**
+ * Keep the speaking order in step with the roster. Appending rather than
+ * rebuilding matters once a debate is under way: `cursor` indexes into this
+ * list, so reordering it would hand the floor to the wrong debater.
+ */
+async function addToOrder(ctx: MutationCtx, roomId: Id<'rooms'>, memberKey: string) {
+  const room = await ctx.db.get(roomId);
+  if (!room) return;
+  const cfg = (room.config ?? {}) as DebateConfig;
+  const order = cfg.order ?? [];
+  if (order.includes(memberKey)) return;
+  await ctx.db.patch(roomId, { config: { ...(room.config ?? {}), order: [...order, memberKey] } });
+}
+
+/** Seat the whole house panel at once. Idempotent. */
+export const seatHouseCast = mutation({
+  args: { slug: v.string() },
+  handler: async (ctx, { slug }) => {
+    const room = await getRoomBySlug(ctx, slug);
+    if (!room) throw new Error('no such room');
+    for (const m of HOUSE_MASKS) {
+      await joinMember(ctx, room._id, {
+        memberKey: m.key, kind: 'mask', name: m.name, persona: m.persona,
+      });
+      await addToOrder(ctx, room._id, m.key);
+    }
+    return { seated: HOUSE_MASKS.length };
+  },
+});
+
 // ─── Setup ────────────────────────────────────────────────────────────────────
 
 export const state = query({
@@ -182,7 +264,16 @@ export const start = action({
     }
 
     const rules = drawRules();
-    const order = room.speakerKeys;
+
+    // Nobody has seated a debater, so seat the house panel rather than opening
+    // a debate with an empty floor. A judge presses one button and gets a
+    // debate; bringing your own masks still wins, because they are already in
+    // `speakerKeys` by the time this runs.
+    let order = room.speakerKeys;
+    if (order.length === 0) {
+      await ctx.runMutation(api.debate.seatHouseCast, { slug });
+      order = HOUSE_MASKS.map((m) => m.key);
+    }
 
     await ctx.runMutation(internal.debate.applyConfig, {
       roomId: room._id,
