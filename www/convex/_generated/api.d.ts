@@ -13,6 +13,7 @@ import type * as cast from "../cast.js";
 import type * as debate from "../debate.js";
 import type * as files from "../files.js";
 import type * as messages from "../messages.js";
+import type * as nebius from "../nebius.js";
 import type * as presence from "../presence.js";
 import type * as pro from "../pro.js";
 import type * as rentable from "../rentable.js";
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   debate: typeof debate;
   files: typeof files;
   messages: typeof messages;
+  nebius: typeof nebius;
   presence: typeof presence;
   pro: typeof pro;
   rentable: typeof rentable;

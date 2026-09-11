@@ -11,6 +11,7 @@ import { api, internal } from './_generated/api';
 import { TURN_CLAIM_TTL_MS, appendEvent, getRoomBySlug, joinMember } from './rooms';
 import { HOUSE_MASKS } from './cast';
 import { callModel, hasInference, judgeModel } from './agent';
+import { callNebius, hasNebius, type NebiusMeasurement } from './nebius';
 import { RENTED_PREFIX } from './rentable';
 import type { Doc, Id } from './_generated/dataModel';
 import type { MutationCtx } from './_generated/server';
@@ -633,32 +634,59 @@ export const verdict = internalAction({
     }
 
     const criteria = SCORING_CRITERIA.map((c) => `${c.id} (${c.label})`).join(', ');
-    const reply = await callModel({
-      model: judgeModel(),
-      system:
-        `You are ${brief.hostName}, moderating a live debate, and you are calling it. ` +
-        `Score every debater 0-10 on each of: ${criteria}. Reward wit and specificity; ` +
-        `penalise breaking a house rule in force, and reward claims that were actually ` +
-        `researched over claims merely asserted. Reply only with JSON matching ` +
-        `{"winner":string,"summary":string,"scores":[{"name":string,"byCriterion":{"entertainment":number,` +
-        `"argument":number,"evidence":number,"character":number},"note":string}]}. ` +
-        `"summary" is two sentences, said out loud to the room, in your voice.`,
-      messages: [
-        {
-          role: 'user',
-          content:
-            `Motion: ${brief.topic}\n` +
-            `House rules: ${brief.rules.join(' · ') || 'none'}\n` +
-            `Debaters: ${brief.debaters.map((d) => d.name).join(', ')}\n` +
-            `Research the room ran: ${brief.researchCount} passes over ${brief.claims.length} claims` +
-            `${brief.claims.length ? ` (${brief.claims.join('; ')})` : ''}\n\n` +
-            `Transcript:\n${brief.transcript}`,
-        },
-      ],
-      maxTokens: 1500,
-      guildId: creds.guildId,
-      onBehalfOf: creds.startedBy,
-    });
+    const judgeSystem =
+      `You are ${brief.hostName}, moderating a live debate, and you are calling it. ` +
+      `Score every debater 0-10 on each of: ${criteria}. Reward wit and specificity; ` +
+      `penalise breaking a house rule in force, and reward claims that were actually ` +
+      `researched over claims merely asserted. Reply only with JSON matching ` +
+      `{"winner":string,"summary":string,"scores":[{"name":string,"byCriterion":{"entertainment":number,` +
+      `"argument":number,"evidence":number,"character":number},"note":string}]}. ` +
+      `"summary" is two sentences, said out loud to the room, in your voice.`;
+
+    const judgeUser =
+      `Motion: ${brief.topic}\n` +
+      `House rules: ${brief.rules.join(' · ') || 'none'}\n` +
+      `Debaters: ${brief.debaters.map((d) => d.name).join(', ')}\n` +
+      `Research the room ran: ${brief.researchCount} passes over ${brief.claims.length} claims` +
+      `${brief.claims.length ? ` (${brief.claims.join('; ')})` : ''}\n\n` +
+      `Transcript:\n${brief.transcript}`;
+
+    // Nebius judges. The debaters speak through the room's own key; scoring runs
+    // on a separate model on purpose, so the panel is never marking its own
+    // homework. The cost is recorded either way — a refusal is a measurement
+    // too, and the room falls back to the debaters' model rather than ending
+    // with no verdict at all.
+    let measurement: NebiusMeasurement | undefined;
+    let reply: { text: string };
+
+    const judgeWithRoomModel = () =>
+      callModel({
+        model: judgeModel(),
+        system: judgeSystem,
+        messages: [{ role: 'user' as const, content: judgeUser }],
+        maxTokens: 1500,
+        guildId: creds.guildId,
+        onBehalfOf: creds.startedBy,
+      });
+
+    if (hasNebius()) {
+      const scored = await callNebius({ system: judgeSystem, user: judgeUser, maxTokens: 1500 });
+      measurement = scored.measurement;
+      if (scored.measurement.ok) {
+        reply = { text: scored.text };
+      } else {
+        await ctx.runMutation(internal.agent.emitEvent, {
+          roomId,
+          type: 'system',
+          actorName: 'room',
+          body: `The judge (${scored.measurement.model}) did not answer: ${scored.measurement.error}. Falling back.`,
+          data: { kind: 'judge-fallback', measurement: scored.measurement },
+        });
+        reply = await judgeWithRoomModel();
+      }
+    } else {
+      reply = await judgeWithRoomModel();
+    }
 
     let parsed: {
       winner?: string;
@@ -691,12 +719,12 @@ export const verdict = internalAction({
     await ctx.runMutation(internal.agent.emitEvent, {
       roomId, type: 'host', actorKey: 'host', actorName: brief.hostName,
       body: `${parsed.summary ?? ''}\n\nThe debate goes to ${parsed.winner ?? 'nobody'}.`.trim(),
-      data: { kind: 'verdict', winner: parsed.winner, scores },
+      data: { kind: 'verdict', winner: parsed.winner, scores, measurement },
     });
 
     await ctx.runMutation(internal.debate.finish, {
       roomId,
-      verdict: { winner: parsed.winner ?? '', summary: parsed.summary ?? '', scores },
+      verdict: { winner: parsed.winner ?? '', summary: parsed.summary ?? '', scores, measurement },
     });
     return { called: true };
   },
