@@ -13,6 +13,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@maskord/shared': path.resolve(__dirname, '../shared/src/index.ts'),
+      '@maskord/convex': path.resolve(__dirname, '../../www/convex/_generated/api.js'),
     },
   },
   base: '/app/',
