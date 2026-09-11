@@ -66,7 +66,9 @@ front of it is presentation rather than proof.
 
 ## Notes
 
-- `convex/` is outside `www/tsconfig.json`'s `include`, so it does not affect
-  the Vite/S3 build.
+- `convex/` is not in `www/tsconfig.json`'s `include`, but `src/channel/ChannelView.tsx`
+  imports `convex/_generated/api`, so `npm run build` type-checks every file under
+  `convex/` with `noUnusedLocals`/`noUnusedParameters` on. An unused import in a
+  Convex function fails the deploy.
 - `convex/_generated/` is created by the first `npx convex dev` or
   `npx convex deploy`.
