@@ -1,15 +1,13 @@
 import { v } from 'convex/values';
 import { makeFunctionReference } from 'convex/server';
 import {
-  action,
   internalAction,
   internalMutation,
   internalQuery,
   query,
 } from './_generated/server';
 import { internal } from './_generated/api';
-import { appendEvent, getRoomBySlug } from './rooms';
-import type { Id } from './_generated/dataModel';
+import { appendEvent } from './rooms';
 
 /**
  * Shared inference for both game modes. The debate's moderator and the D&D DM
@@ -267,37 +265,6 @@ export const runTurn = internalAction({
     }
 
     return { spoke: Boolean(reply.text), toolCalls: reply.toolCalls.length };
-  },
-});
-
-/**
- * Public entry point so a client can nudge a room forward. Kept deliberately
- * thin: it resolves the slug and schedules the internal action, so the browser
- * never learns anything about prompts or keys.
- */
-export const nudge = action({
-  args: { slug: v.string(), memberKey: v.string() },
-  handler: async (ctx, { slug, memberKey }): Promise<{ scheduled: boolean }> => {
-    const room: { _id: Id<'rooms'>; kind: string } | null = await ctx.runQuery(
-      internal.agent.roomForSlug,
-      { slug },
-    );
-    if (!room) throw new Error(`No room "${slug}"`);
-    await ctx.scheduler.runAfter(0, internal.agent.runTurn, {
-      roomId: room._id,
-      memberKey,
-      actorName: memberKey,
-      system: 'You are a participant in a live room. Stay in character.',
-    });
-    return { scheduled: true };
-  },
-});
-
-export const roomForSlug = internalQuery({
-  args: { slug: v.string() },
-  handler: async (ctx, { slug }) => {
-    const room = await getRoomBySlug(ctx, slug);
-    return room ? { _id: room._id, kind: room.kind } : null;
   },
 });
 

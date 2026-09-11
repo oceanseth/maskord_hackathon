@@ -192,7 +192,21 @@ export const investigate = internalAction({
         return { iterations: iteration + 1, reason: 'error' as const };
       }
 
-      const { finding, confidence, gaps, nextQuery } = await assess(claim, query, sources);
+      // `assess` calls the model, so it fails for all the reasons a model call
+      // fails. Leaving it outside the try meant a thrown assessment aborted the
+      // action with nothing written, and the room just went quiet.
+      let assessed;
+      try {
+        assessed = await assess(claim, query, sources);
+      } catch (err) {
+        await ctx.runMutation(internal.research.record, {
+          roomId, claim, askedBy, iteration, query, sources,
+          finding: `Could not weigh the sources: ${(err as Error).message}`,
+          confidence: 0, gaps: [], nextQuery: null, stopReason: 'error',
+        });
+        return { iterations: iteration + 1, reason: 'error' as const };
+      }
+      const { finding, confidence, gaps, nextQuery } = assessed;
       const last = iteration + 1 >= cap;
       const stopReason =
         confidence >= CONFIDENT_AT ? 'confident'
