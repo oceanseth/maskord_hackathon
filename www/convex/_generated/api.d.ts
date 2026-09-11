@@ -16,6 +16,11 @@ import type * as presence from "../presence.js";
 import type * as research from "../research.js";
 import type * as rooms from "../rooms.js";
 import type * as servers from "../servers.js";
+import type * as wizard from "../wizard.js";
+import type * as wizard_engine from "../wizard/engine.js";
+import type * as wizard_pregens from "../wizard/pregens.js";
+import type * as wizard_scenario from "../wizard/scenario.js";
+import type * as wizard_types from "../wizard/types.js";
 
 import type {
   ApiFromModules,
@@ -32,6 +37,11 @@ declare const fullApi: ApiFromModules<{
   research: typeof research;
   rooms: typeof rooms;
   servers: typeof servers;
+  wizard: typeof wizard;
+  "wizard/engine": typeof wizard_engine;
+  "wizard/pregens": typeof wizard_pregens;
+  "wizard/scenario": typeof wizard_scenario;
+  "wizard/types": typeof wizard_types;
 }>;
 
 /**
