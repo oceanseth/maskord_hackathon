@@ -178,4 +178,26 @@ export default defineSchema({
     fires: v.any(),
     xp: v.number(),
   }).index('by_room', ['roomId']),
+
+  // A masky.ai avatar its owner has put up for rent. Deliberately a *copy* of
+  // the three strings a room needs, not a pointer: avatars live at
+  // `users/{uid}/avatarGroups` in Firestore, where the rules let a user read
+  // only their own. Publishing is therefore the owner reading their own doc and
+  // handing us the parts — so no reader ever needs another user's Firestore
+  // subtree, and no rules change is required to rent a mask out.
+  rentableMasks: defineTable({
+    /** Firebase uid of the owner, who earns from every appearance. */
+    ownerUid: v.string(),
+    ownerName: v.string(),
+    /** masky.ai avatarGroup id, so re-publishing updates rather than duplicates. */
+    avatarId: v.string(),
+    name: v.string(),
+    persona: v.string(),
+    thumbnailUrl: v.optional(v.string()),
+    publishedAt: v.number(),
+    /** Times this mask has been seated. The compensation metric. */
+    rentals: v.number(),
+  })
+    .index('by_owner', ['ownerUid'])
+    .index('by_avatar', ['ownerUid', 'avatarId']),
 });
