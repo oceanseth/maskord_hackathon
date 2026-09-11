@@ -11,3 +11,7 @@ The only substitution the loader makes is `{{host}}`, the room's host name.
 Convex bundles functions with esbuild, which has no loader for `.md`, so
 `scripts/gen-skills.mjs` inlines these files into `_generated.ts`. `npm run
 build` runs it; run it by hand after editing a file during `npx convex dev`.
+
+A missing file is not fatal: `skillFor` logs a warning and returns a generic
+prompt for the `<kind>/<phase>` so the host keeps talking while someone fixes
+the file. Watch the Convex logs for `skillFor: no skillfile` after renaming one.
