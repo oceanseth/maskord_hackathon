@@ -28,6 +28,7 @@ import {
   deleteChannel,
   leaveGuild,
   deleteGuild,
+  useDefaultGuildId,
 } from '@maskord/shared';
 import type { Channel } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
@@ -181,6 +182,7 @@ export default function ChannelSidebar({ guildId }: Props) {
   }, [renamingChannelId]);
 
   const isOwner = guild?.ownerId === firebaseUser?.uid;
+  const isDefaultGuild = guildId === useDefaultGuildId(firebaseUser?.uid ?? null);
 
   // ─── Channel actions ─────────────────────────────────────────────────────────
 
@@ -400,11 +402,17 @@ export default function ChannelSidebar({ guildId }: Props) {
               {isOwner && (
                 <MenuItem label="Server Settings" icon={<GearIcon />} onClick={() => { setShowSettings(true); setHeaderMenuOpen(false); }} />
               )}
-              <div className="h-px bg-[#1e1e2e] my-1" />
-              {isOwner ? (
-                <MenuItem label="Delete Server" icon={<TrashIcon />} danger onClick={() => { handleDelete(); setHeaderMenuOpen(false); }} />
-              ) : (
-                <MenuItem label="Leave Server"  icon={<LeaveIcon />} danger onClick={() => { handleLeave(); setHeaderMenuOpen(false); }} />
+              {/* The shared Maskord server is everybody's home and is not
+                  leaveable or deletable — leaveGuild refuses it server-side too. */}
+              {!isDefaultGuild && (
+                <>
+                  <div className="h-px bg-[#1e1e2e] my-1" />
+                  {isOwner ? (
+                    <MenuItem label="Delete Server" icon={<TrashIcon />} danger onClick={() => { handleDelete(); setHeaderMenuOpen(false); }} />
+                  ) : (
+                    <MenuItem label="Leave Server"  icon={<LeaveIcon />} danger onClick={() => { handleLeave(); setHeaderMenuOpen(false); }} />
+                  )}
+                </>
               )}
             </div>
           )}

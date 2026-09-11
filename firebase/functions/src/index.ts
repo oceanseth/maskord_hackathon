@@ -172,6 +172,71 @@ async function assertGuestAllowed(
   }
 }
 
+// ─── The shared Maskord server ────────────────────────────────────────────────
+//
+// One server everybody is in: the room a new account — or a guest who has just
+// clicked "look around" — lands in with people already in it, instead of an
+// empty personal server.
+//
+// Which guild that is lives in `system/maskordDefaults.guildId`, written once by
+// `scripts/provision-maskord-server.mjs`. It is deliberately not a build-time
+// constant: pointing the whole product at a different server should not need a
+// client release. Nothing client-side reads the doc — only these functions do,
+// with admin credentials — so it needs no rules change.
+
+/** `system/maskordDefaults.guildId`, or null when it has not been provisioned. */
+async function defaultGuildId(): Promise<string | null> {
+  const snap = await db.doc('system/maskordDefaults').get();
+  const id = snap.data()?.guildId;
+  return typeof id === 'string' && id ? id : null;
+}
+
+/**
+ * Put the caller in the shared server. Idempotent, and safe to call on every
+ * load: the common case is one document read that finds an existing membership.
+ *
+ * Guests are welcome here by design — this is the server the guest button
+ * exists for — but they still go through the same allowGuests check as any
+ * other server, so turning that setting off closes this door too.
+ */
+export const joinDefaultGuild = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+
+  const guildId = await defaultGuildId();
+  if (!guildId) throw new HttpsError('failed-precondition', 'No shared server is configured');
+
+  const userId = request.auth.uid;
+  const memberRef = db.doc(`guilds/${guildId}/members/${userId}`);
+  if ((await memberRef.get()).exists) return { guildId, alreadyMember: true };
+
+  const guildSnap = await db.doc(`guilds/${guildId}`).get();
+  if (!guildSnap.exists) throw new HttpsError('not-found', 'The shared server is missing');
+  await assertGuestAllowed(request, guildId);
+
+  // Same @everyone role every other join path hands out.
+  const everyone = await db.collection(`guilds/${guildId}/roles`)
+    .where('name', '==', '@everyone').limit(1).get();
+  const roles = everyone.empty ? [] : [everyone.docs[0].id];
+
+  const batch = db.batch();
+  batch.set(memberRef, {
+    nickname: null,
+    roles,
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+    muted: false,
+    deafened: false,
+    pending: false,
+  });
+  batch.set(db.doc(`members_index/${guildId}_${userId}`), {
+    guildId,
+    userId,
+    joinedAt: admin.firestore.FieldValue.serverTimestamp(),
+  });
+  await batch.commit();
+
+  return { guildId, alreadyMember: false };
+});
+
 // ─── Create Guild ─────────────────────────────────────────────────────────────
 
 // DEFAULT_PERMISSIONS = VIEW_CHANNEL|SEND_MESSAGES|READ_MESSAGE_HISTORY|EMBED_LINKS|ATTACH_FILES|ADD_REACTIONS|CONNECT|SPEAK
@@ -467,6 +532,12 @@ export const leaveGuild = onCall(async (request) => {
   if (!guildId) throw new HttpsError('invalid-argument', 'guildId required');
 
   const userId = request.auth.uid;
+
+  // The shared server is not leaveable. The client hides the menu item; this is
+  // the half that holds when someone calls the function directly.
+  if (guildId === await defaultGuildId()) {
+    throw new HttpsError('failed-precondition', 'The Maskord server cannot be left');
+  }
 
   // Owners can't leave (must transfer ownership first)
   const guildSnap = await db.doc(`guilds/${guildId}`).get();
