@@ -1,16 +1,25 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@maskord/shared';
 import { useMaskyAvatars, type MaskyAvatarGroup } from '../../hooks/useMaskyAvatars';
+import { useMaskordPro } from '../../hooks/useMaskordPro';
+import ProPanel from '../pro/ProPanel';
+import PaywallModal from '../pro/PaywallModal';
+import ErrorBoundary from './ErrorBoundary';
 
 interface Props {
   onClose: () => void;
 }
+
+type Section = 'avatar' | 'pro';
 
 export default function SettingsModal({ onClose }: Props) {
   const { firebaseUser } = useAuth();
   const { avatarGroups, loading, selectedId, setSelected } = useMaskyAvatars(
     firebaseUser?.uid ?? null,
   );
+  const pro = useMaskordPro(firebaseUser?.uid ?? null);
+  const [section, setSection] = useState<Section>('avatar');
+  const [paywall, setPaywall] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   // Close on Escape
@@ -37,7 +46,20 @@ export default function SettingsModal({ onClose }: Props) {
             </span>
           </div>
 
-          <NavItem label="Avatar" icon={<AvatarIcon />} active />
+          <NavItem
+            label="Avatar"
+            icon={<AvatarIcon />}
+            active={section === 'avatar'}
+            onClick={() => setSection('avatar')}
+          />
+          <NavItem
+            label="Maskord Pro"
+            icon={<SparkIcon />}
+            active={section === 'pro'}
+            onClick={() => setSection('pro')}
+            // The status a subscriber is looking for, without opening the tab.
+            badge={pro.loading ? undefined : pro.pro ? 'Active' : pro.lapsed ? 'Expired' : undefined}
+          />
 
           {/* Placeholder items — add sections here as features ship */}
           <NavItem label="AI Voice" icon={<MicIcon />} disabled />
@@ -60,6 +82,39 @@ export default function SettingsModal({ onClose }: Props) {
 
         {/* ── Main content ── */}
         <div className="flex-1 overflow-y-auto scrollable p-8">
+          {section === 'pro' ? (
+            <>
+              <h2 className="text-xl font-bold text-white mb-1">Maskord Pro</h2>
+              <p className="text-sm text-[#6b7280] mb-6">
+                One subscription seats any mask another member has published — and publishing your
+                own is how you earn from them.
+              </p>
+
+              {firebaseUser ? (
+                <ErrorBoundary
+                  fallback={
+                    <div className="text-sm text-[#6b7280] border border-[#1e1e2e] rounded-lg px-4 py-5">
+                      Subscriptions are unavailable right now — this build is talking to a Convex
+                      deployment that does not have the Pro functions published yet.
+                    </div>
+                  }
+                >
+                  <ProPanel
+                    uid={firebaseUser.uid}
+                    displayName={firebaseUser.displayName ?? 'Someone'}
+                    pro={pro}
+                    onUpgrade={() => setPaywall(true)}
+                  />
+                </ErrorBoundary>
+              ) : (
+                <div className="text-sm text-[#6b7280] border border-[#1e1e2e] rounded-lg px-4 py-5">
+                  Sign in to subscribe — a purchase has to belong to an account, or it disappears
+                  with the browser.
+                </div>
+              )}
+            </>
+          ) : (
+            <>
           <h2 className="text-xl font-bold text-white mb-1">Avatar</h2>
           <p className="text-sm text-[#6b7280] mb-6">
             Powered by{' '}
@@ -166,8 +221,22 @@ export default function SettingsModal({ onClose }: Props) {
               streaming video will be added in a future update.
             </p>
           </div>
+            </>
+          )}
         </div>
       </div>
+
+      {paywall && (
+        <PaywallModal
+          offering={pro.offering}
+          lapsed={pro.lapsed}
+          onPurchased={() => {
+            void pro.refresh();
+            setPaywall(false);
+          }}
+          onClose={() => setPaywall(false)}
+        />
+      )}
     </div>
   );
 }
@@ -240,16 +309,19 @@ function AvatarOption({ thumbnailUrl, label, sublabel, hasVoice, selected, onCli
 // ─── Sidebar nav item ─────────────────────────────────────────────────────────
 
 function NavItem({
-  label, icon, active, disabled,
+  label, icon, active, disabled, onClick, badge,
 }: {
   label: string;
   icon: React.ReactNode;
   active?: boolean;
   disabled?: boolean;
+  onClick?: () => void;
+  badge?: string;
 }) {
   return (
     <button
       disabled={disabled}
+      onClick={onClick}
       className={`
         w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors text-left
         ${active
@@ -262,6 +334,11 @@ function NavItem({
     >
       <span className="w-4 h-4 flex-shrink-0">{icon}</span>
       {label}
+      {badge && (
+        <span className="ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-600/20 text-violet-300">
+          {badge}
+        </span>
+      )}
       {disabled && (
         <span className="ml-auto text-[10px] text-[#3a3a4e] font-medium">Soon</span>
       )}
@@ -275,6 +352,14 @@ function AvatarIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
       <path d="M12 12c2.7 0 4.8-2.1 4.8-4.8S14.7 2.4 12 2.4 7.2 4.5 7.2 7.2 9.3 12 12 12zm0 2.4c-3.2 0-9.6 1.6-9.6 4.8v2.4h19.2v-2.4c0-3.2-6.4-4.8-9.6-4.8z" />
+    </svg>
+  );
+}
+
+function SparkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
+      <path d="M12 2l2.2 5.8L20 10l-5.8 2.2L12 18l-2.2-5.8L4 10l5.8-2.2L12 2zm6.5 12l1.1 2.9 2.9 1.1-2.9 1.1L18.5 22l-1.1-2.9-2.9-1.1 2.9-1.1L18.5 14z" />
     </svg>
   );
 }
