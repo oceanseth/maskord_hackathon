@@ -21,7 +21,22 @@
  */
 
 const DEFAULT_BASE_URL = 'https://api.tokenfactory.nebius.com/v1';
-const DEFAULT_MODEL = 'meta-llama/Llama-3.3-70B-Instruct';
+
+/**
+ * Measured on the real judging prompt against the account's catalogue, not
+ * picked for its name:
+ *
+ *   Qwen/Qwen3-30B-A3B-Instruct-2507      5.5s   valid JSON
+ *   meta-llama/Llama-3.3-70B-Instruct    10.8s   valid JSON (283s on a cold first call)
+ *   deepseek-ai/DeepSeek-V4-Flash-0731    1.9s   empty completion — unusable here
+ *
+ * Both working models returned the same winner on the same transcript, so the
+ * cheap one costs nothing in agreement and saves a demo from a five-minute
+ * pause. That cold start is real: the first call to a model that has not been
+ * used recently pays for the wake-up, which is worth one throwaway request
+ * before anyone is watching.
+ */
+const DEFAULT_MODEL = 'Qwen/Qwen3-30B-A3B-Instruct-2507';
 
 export function hasNebius(): boolean {
   return Boolean(process.env.NEBIUS_API_KEY);
