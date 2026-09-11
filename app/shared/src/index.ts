@@ -25,4 +25,6 @@ export { useDmConversations } from './hooks/useDmConversations';
 export { useBulkPresence } from './hooks/useBulkPresence';
 export { useLiveMessages, useLiveStatus } from './hooks/useLive';
 export { useTranscript, appendTranscriptUtterance } from './hooks/useTranscript';
+export { useDefaultGuildId, ensureDefaultGuild } from './hooks/useDefaultGuild';
+export { findUsersByHandle } from './hooks/useUserSearch';
 export type { TranscriptUtterance } from './hooks/useTranscript';

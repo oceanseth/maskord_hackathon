@@ -1,12 +1,18 @@
 import { useEffect, useMemo } from 'react';
 import { doc, updateDoc } from 'firebase/firestore';
-import { useAuth, useUserGuilds, createGuild, useUserProfiles, getFirebaseDb } from '@maskord/shared';
+import { useAuth, useUserGuilds, createGuild, useUserProfiles, getFirebaseDb, useDefaultGuildId } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
 
 export default function GuildSidebar() {
   const { firebaseUser, profile } = useAuth();
   const { guilds, loading: guildsLoading } = useUserGuilds(firebaseUser?.uid ?? null);
   const { activeGuildId, setActiveGuild } = useAppStore();
+
+  // The shared Maskord server. Joining happens inside this hook, so simply
+  // being signed in puts you in it; it then pins above everyone's own servers.
+  const defaultGuildId = useDefaultGuildId(firebaseUser?.uid ?? null);
+  const defaultGuild = guilds.find((g) => g.id === defaultGuildId) ?? null;
+  const ownGuilds = guilds.filter((g) => g.id !== defaultGuildId);
 
   // Fetch owner profiles for guilds that don't have a custom icon set,
   // so we can fall back to the owner's avatar (e.g. their Twitch profile pic).
@@ -21,24 +27,29 @@ export default function GuildSidebar() {
   useEffect(() => {
     if (!firebaseUser || !profile || guildsLoading) return;
 
+    // A guest is looking around, not moving in. They get the shared server and
+    // nothing else — an empty "Guest's server" would only be noise.
+    if (firebaseUser.isAnonymous) return;
+
     const key = `maskord:personal_guild:${firebaseUser.uid}`;
 
-    if (guilds.length > 0) {
-      // Already has a guild — record that so we never try to create again.
+    // Owning a server is the test, not membership of one: everybody is a member
+    // of the shared Maskord server, and that must not stand in for having your
+    // own.
+    const ownedGuild = guilds.find((g) => g.ownerId === firebaseUser.uid);
+    if (ownedGuild) {
+      // Already has their own — record that so we never try to create again.
       localStorage.setItem(key, '1');
       // Migration: backfill personalGuildId for users created before this field existed
       if (!profile.personalGuildId) {
-        const ownedGuild = guilds.find((g) => g.ownerId === firebaseUser.uid);
-        if (ownedGuild) {
-          updateDoc(doc(getFirebaseDb(), 'users', firebaseUser.uid), {
-            personalGuildId: ownedGuild.id,
-          }).catch(() => {});
-        }
+        updateDoc(doc(getFirebaseDb(), 'users', firebaseUser.uid), {
+          personalGuildId: ownedGuild.id,
+        }).catch(() => {});
       }
       return;
     }
 
-    // No guilds yet. Only create if we haven't already kicked off a creation.
+    // No server of their own yet. Only create if we haven't already kicked one off.
     if (localStorage.getItem(key)) return;
     localStorage.setItem(key, '1'); // set BEFORE the async call to prevent races
 
@@ -53,7 +64,7 @@ export default function GuildSidebar() {
         if (!useAppStore.getState().activeGuildId) setActiveGuild(guildId);
       })
       .catch(() => localStorage.removeItem(key)); // allow retry on failure
-  }, [firebaseUser, profile, guildsLoading, guilds.length, setActiveGuild]);
+  }, [firebaseUser, profile, guildsLoading, guilds, setActiveGuild]);
 
   return (
     <div className="w-[72px] flex-shrink-0 bg-[#06060a] border-r border-[#1e1e2e] flex flex-col items-center">
@@ -72,8 +83,22 @@ export default function GuildSidebar() {
 
         <div className="w-8 h-px bg-[#1e1e2e] my-1" />
 
+        {/* The shared Maskord server, pinned above your own and never leaveable */}
+        {defaultGuild && (
+          <>
+            <GuildButton
+              active={activeGuildId === defaultGuild.id}
+              onClick={() => setActiveGuild(defaultGuild.id)}
+              label={defaultGuild.name}
+              iconUrl={defaultGuild.iconUrl || ownerProfiles[defaultGuild.ownerId]?.avatarUrl}
+              name={defaultGuild.name}
+            />
+            {ownGuilds.length > 0 && <div className="w-8 h-px bg-[#1e1e2e] my-1" />}
+          </>
+        )}
+
         {/* Guild list */}
-        {guilds.map((guild) => (
+        {ownGuilds.map((guild) => (
           <GuildButton
             key={guild.id}
             active={activeGuildId === guild.id}

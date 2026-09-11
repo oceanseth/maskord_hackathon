@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import {
   useAuth,
   useUserProfiles,
@@ -10,6 +10,7 @@ import {
 import type { UserStatus } from '@maskord/shared';
 import { useAppStore } from '../../store/app';
 import UserPanel from '../ui/UserPanel';
+import AddFriendModal from './AddFriendModal';
 import { useDmUnread } from '../../hooks/useDmUnread';
 
 function StatusDot({ status }: { status: UserStatus }) {
@@ -41,9 +42,11 @@ export default function HomePanel() {
 
   const myUid = firebaseUser?.uid ?? null;
 
-  const { friends, getFriendUid } = useFriendships(myUid);
+  const { friends, getFriendUid, pendingIncoming, acceptRequest, rejectRequest } = useFriendships(myUid);
   const { conversations, getPartnerUid } = useDmConversations(myUid);
   const { counts: dmUnreadCounts } = useDmUnread(myUid, conversations);
+
+  const [showAddFriend, setShowAddFriend] = useState(false);
 
   // Stable UID derivation — avoids getFriendUid function reference changing each render
   const friendUids = useMemo(
@@ -66,9 +69,16 @@ export default function HomePanel() {
       .filter(Boolean),
     [nonFriendConversations, myUid],
   );
+  // Whoever has asked to be friends — their names have to render in the
+  // pending list before you have accepted anything.
+  const requesterUids = useMemo(
+    () => pendingIncoming.map((f) => f.requesterId).filter(Boolean),
+    [pendingIncoming],
+  );
+
   const allUids = useMemo(
-    () => [...new Set([...friendUids, ...convPartnerUids])],
-    [friendUids, convPartnerUids],
+    () => [...new Set([...friendUids, ...convPartnerUids, ...requesterUids])],
+    [friendUids, convPartnerUids, requesterUids],
   );
 
   const presence = useBulkPresence(friendUids);
@@ -98,11 +108,63 @@ export default function HomePanel() {
     <div className="w-full md:w-60 md:flex-shrink-0 bg-[#0e0e16] md:border-r border-[#1e1e2e] flex flex-col min-w-0">
       {/* Header */}
       <div className="h-12 flex items-center px-4 border-b border-[#1e1e2e] drag-region flex-shrink-0">
-        <span className="font-semibold text-white text-sm no-drag">Home</span>
+        <span className="font-semibold text-white text-sm no-drag flex-1">Home</span>
+        {myUid && (
+          <button
+            onClick={() => setShowAddFriend(true)}
+            title="Add a friend by username"
+            className="no-drag w-6 h-6 rounded-md flex items-center justify-center text-[#9ca3af] hover:text-white hover:bg-violet-600 transition-colors"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {/* Scrollable content */}
       <div className="flex-1 overflow-y-auto scrollable py-2">
+
+        {/* Friend requests waiting on you */}
+        {pendingIncoming.length > 0 && (
+          <>
+            <div className="px-4 pt-2 pb-1">
+              <span className="text-[10px] font-semibold text-violet-400 uppercase tracking-wider">
+                Friend Requests — {pendingIncoming.length}
+              </span>
+            </div>
+            {pendingIncoming.map((f) => {
+              const uid  = f.requesterId;
+              const name = displayName(uid);
+              const p    = profiles[uid];
+              return (
+                <div key={f.id} className="flex items-center gap-2 px-4 py-1.5">
+                  <div className="w-8 h-8 rounded-full bg-violet-600/30 overflow-hidden flex items-center justify-center flex-shrink-0">
+                    {p?.avatarUrl
+                      ? <img src={p.avatarUrl} alt={name} className="w-full h-full object-cover" />
+                      : <span className="text-[10px] font-bold text-violet-300">{name.substring(0, 2).toUpperCase()}</span>
+                    }
+                  </div>
+                  <span className="flex-1 min-w-0 truncate text-sm text-[#c8d0e0]">{name}</span>
+                  <button
+                    onClick={() => void acceptRequest(f.id)}
+                    title={`Accept ${name}'s friend request`}
+                    className="px-2 py-1 rounded-md bg-violet-600 hover:bg-violet-500 text-white text-[11px] font-medium transition-colors"
+                  >
+                    Accept
+                  </button>
+                  <button
+                    onClick={() => void rejectRequest(f.id)}
+                    title={`Decline ${name}'s friend request`}
+                    className="px-2 py-1 rounded-md border border-[#2a2a3e] hover:border-red-500/60 text-[#9ca3af] hover:text-red-400 text-[11px] font-medium transition-colors"
+                  >
+                    Decline
+                  </button>
+                </div>
+              );
+            })}
+          </>
+        )}
 
         {/* Friends section */}
         {sortedFriends.length > 0 && (
@@ -193,13 +255,22 @@ export default function HomePanel() {
         )}
 
         {/* Empty state */}
-        {sortedFriends.length === 0 && nonFriendConversations.length === 0 && (
+        {sortedFriends.length === 0 && nonFriendConversations.length === 0 && pendingIncoming.length === 0 && (
           <div className="px-4 py-8 text-center">
             <p className="text-sm text-[#4b5563]">No friends or DMs yet.</p>
-            <p className="text-xs text-[#374151] mt-1">Open a DM from a voice channel to get started.</p>
+            <button
+              onClick={() => setShowAddFriend(true)}
+              className="mt-2 text-xs text-violet-400 hover:text-violet-300 transition-colors"
+            >
+              Add a friend by username
+            </button>
           </div>
         )}
       </div>
+
+      {showAddFriend && myUid && (
+        <AddFriendModal myUid={myUid} onClose={() => setShowAddFriend(false)} />
+      )}
 
       {/* User panel */}
       {firebaseUser && <UserPanel userId={firebaseUser.uid} />}
