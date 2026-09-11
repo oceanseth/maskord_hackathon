@@ -60,6 +60,12 @@ export default defineSchema({
       v.literal('paused'),
       v.literal('finished'),
     ),
+    /**
+     * Where the channel is in its mode's flow (D&D: ruleset -> characters ->
+     * play -> resolve). Set only through `rooms.setPhase`; the kind module owns
+     * the transitions. Absent on rooms made before phases existed.
+     */
+    phase: v.optional(v.string()),
     /** Who paused and why, while status is 'paused'. */
     pause: v.optional(
       v.object({

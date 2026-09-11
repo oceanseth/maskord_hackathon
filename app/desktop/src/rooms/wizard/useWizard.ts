@@ -3,7 +3,8 @@ import { useMutation, useQuery } from 'convex/react';
 import { api } from '@maskord/convex';
 import type { RoomHandle } from '../useRoom';
 import type { Id } from '../../../../../www/convex/_generated/dataModel';
-import type { CharacterState, Combatant, CreatureState, Fire, Phase, Position, SheetKey } from '../../../../../www/convex/wizard/types';
+import { dndPhase, type CharacterState, type Combatant, type CreatureState, type Fire, type Phase, type Position, type SheetKey } from '../../../../../www/convex/wizard/types';
+import { CAMPAIGNS } from '../../../../../www/convex/wizard/campaigns';
 import { MAPS } from '../../../../../www/convex/wizard/scenario';
 
 export type Seat = { ownerKey: string; ownerName: string; ownerKind: 'human' | 'mask'; confirmed: boolean; name: string };
@@ -30,7 +31,7 @@ export function channelRoomSlug(channelId: string): string {
 export function useWizard(room: RoomHandle) {
   const { roomId, me } = room;
   const game = useQuery(api.wizard.get, roomId ? { roomId } : 'skip');
-  const roomCfg = (room.room?.config ?? {}) as { guildId?: string };
+  const roomCfg = (room.room?.config ?? {}) as { guildId?: string; campaign?: string };
   const capabilities = useQuery(api.agent.capabilities, { guildId: roomCfg.guildId });
 
   const chooseSeat = useMutation(api.wizard.chooseSeat);
@@ -45,6 +46,10 @@ export function useWizard(room: RoomHandle) {
   const walkUp = useMutation(api.wizard.walkUp);
   const check = useMutation(api.wizard.check);
   const shortRest = useMutation(api.wizard.shortRest);
+  const pickCampaign = useMutation(api.wizard.pickCampaign);
+  const endSession = useMutation(api.wizard.endSession);
+  const playAgain = useMutation(api.wizard.playAgain);
+  const newCampaign = useMutation(api.wizard.newCampaign);
 
   const seats = (game?.seats ?? {}) as Seats;
   const characters = (game?.characters ?? []) as CharacterState[];
@@ -52,6 +57,9 @@ export function useWizard(room: RoomHandle) {
   const combatants = (game?.combatants ?? []) as Combatant[];
   const fires = (game?.fires ?? []) as Fire[];
   const phase = (game?.phase ?? 'lobby') as Phase;
+  /** The channel's phase (ruleset/characters/play/resolve); `phase` above is the engine's sub-state inside play. */
+  const channelPhase = dndPhase(room.room?.phase, game ? phase : undefined);
+  const campaign = roomCfg.campaign ? CAMPAIGNS[roomCfg.campaign] ?? null : null;
   const map = MAPS[game?.mapKey ?? 'beach'];
 
   const mySeatKey = useMemo(
@@ -80,6 +88,9 @@ export function useWizard(room: RoomHandle) {
     combatants,
     fires,
     phase,
+    channelPhase,
+    campaign,
+    xp: game?.xp ?? 0,
     map,
     turn: (game?.turn ?? { moved: 0, actionUsed: false, bonusUsed: false, dashed: false }) as { moved: number; actionUsed: boolean; bonusUsed: boolean; dashed: boolean },
     round: game?.round ?? 0,
@@ -101,6 +112,10 @@ export function useWizard(room: RoomHandle) {
     walkUp: () => withRoom((roomId, memberKey) => walkUp({ roomId, memberKey })),
     check: (skill: string, about?: string) => withRoom((roomId, memberKey) => check({ roomId, memberKey, skill, about })),
     shortRest: () => withRoom((roomId, memberKey) => shortRest({ roomId, memberKey })),
+    pickCampaign: (campaignId: string) => withRoom((roomId, memberKey) => pickCampaign({ roomId, memberKey, campaignId })),
+    endSession: () => withRoom((roomId, memberKey) => endSession({ roomId, memberKey })),
+    playAgain: () => withRoom((roomId, memberKey) => playAgain({ roomId, memberKey })),
+    newCampaign: () => withRoom((roomId, memberKey) => newCampaign({ roomId, memberKey })),
   };
 }
 

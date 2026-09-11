@@ -304,6 +304,32 @@ export const setStatus = mutation({
   },
 });
 
+/**
+ * Move a room to the next phase of its mode's flow and say so in the log. Only
+ * the kind module calls this: `rooms.ts` never decides *when* a phase changes,
+ * it only records that one did. `status` is untouched; pause and finish stay
+ * orthogonal to where in the flow the table is.
+ */
+export async function setPhase(
+  ctx: MutationCtx,
+  roomId: Id<'rooms'>,
+  phase: string,
+  by: { byKey?: string; byName: string },
+) {
+  const room = await ctx.db.get(roomId);
+  if (!room) throw new Error('No such room');
+  const from = room.phase;
+  if (from === phase) return;
+  await ctx.db.patch(roomId, { phase });
+  await appendEvent(ctx, roomId, {
+    type: 'system',
+    actorKey: by.byKey,
+    actorName: by.byName,
+    body: `${by.byName} moved the table to ${phase}.`,
+    data: { kind: 'phase', from, to: phase },
+  });
+}
+
 export const patchConfig = mutation({
   args: { roomId: v.id('rooms'), config: v.any() },
   handler: async (ctx, { roomId, config }) => {

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { ChannelMode } from '@maskord/shared';
 import Modal from '../ui/Modal';
+import { CAMPAIGNS, DEFAULT_CAMPAIGN, campaignLabel } from '../../../../../www/convex/wizard/campaigns';
 
 type ChannelKind = 'text' | 'voice' | 'category';
 
@@ -9,7 +10,10 @@ const MODES: { value: ChannelMode; label: string; desc: string }[] = [
   { value: 'default', label: 'Default', desc: 'An ordinary text channel.' },
   {
     value: 'dnd',
-    label: 'D&D table',
+    // The ruleset and campaign are in the label so a person knows what governs
+    // the table before they make it; the catalogue in-channel is where a second
+    // campaign would be picked once one exists.
+    label: campaignLabel(CAMPAIGNS[DEFAULT_CAMPAIGN]),
     desc: 'The channel becomes a game board. Messages are what the party says at the table.',
   },
 ];
