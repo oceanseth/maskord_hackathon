@@ -14,6 +14,9 @@ export {
   onChannelAiDisabled, onGuildAiDisabled, agentSpeak,
   inviteAvatarToVoice,
 } from './claudeAgent';
+// ─── Inference bridge for the Convex game rooms ───────────────────────────────
+export { roomTurn } from './roomTurn';
+
 import { removeAvatarsInvitedBy } from './channelAvatars';
 import { forwardRoomEventToAgents } from './agentbox';
 

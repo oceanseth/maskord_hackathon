@@ -46,8 +46,58 @@ export type ModelReply = {
   toolCalls: Array<{ name: string; input: Record<string, unknown> }>;
 };
 
-export function hasInference(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY);
+export function hasBridge(): boolean {
+  return Boolean(process.env.ROOM_BRIDGE_URL && process.env.ROOM_BRIDGE_SECRET);
+}
+
+/**
+ * True when a turn can be produced at all. A room with a `guildId` can speak
+ * through the bridge even with no key on this deployment, so the answer depends
+ * on the room.
+ */
+export function hasInference(guildId?: string): boolean {
+  if (process.env.ANTHROPIC_API_KEY) return true;
+  return Boolean(guildId) && hasBridge();
+}
+
+/**
+ * Hand the prompt to firebase/functions/src/roomTurn.ts, which reads the guild's
+ * key with admin credentials. Deliberately the only path by which a room touches
+ * a server's key, and it is one-way: the key never comes back.
+ */
+async function callBridge(opts: {
+  system: string;
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>;
+  tools?: ToolSpec[];
+  model?: string;
+  maxTokens?: number;
+  guildId?: string;
+  onBehalfOf?: string;
+}): Promise<ModelReply> {
+  const res = await fetch(process.env.ROOM_BRIDGE_URL as string, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-room-bridge-secret': process.env.ROOM_BRIDGE_SECRET as string,
+    },
+    body: JSON.stringify({
+      guildId: opts.guildId,
+      memberUid: opts.onBehalfOf,
+      system: opts.system,
+      messages: opts.messages,
+      tools: opts.tools,
+      model: opts.model,
+      maxTokens: opts.maxTokens,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+    // These three are the ones a room can actually fix, so say which it is.
+    throw new Error(body.message ?? body.error ?? `bridge ${res.status}`);
+  }
+
+  return (await res.json()) as ModelReply;
 }
 
 /**
@@ -64,9 +114,20 @@ export async function callModel(opts: {
   tools?: ToolSpec[];
   model?: string;
   maxTokens?: number;
+  /** Spend this server's key through the bridge when the deployment has none. */
+  guildId?: string;
+  /** Firebase uid the spend is attributed to; the bridge checks membership. */
+  onBehalfOf?: string;
 }): Promise<ModelReply> {
   const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error('ANTHROPIC_API_KEY is not set on this Convex deployment');
+
+  // No deployment key: borrow the server's, the same one index.html has always
+  // used. The key itself stays in Firebase — we send the prompt, not fetch the
+  // secret.
+  if (!key) {
+    if (opts.guildId && hasBridge()) return await callBridge(opts);
+    throw new Error('ANTHROPIC_API_KEY is not set on this Convex deployment');
+  }
 
   const res = await fetch(ANTHROPIC_URL, {
     method: 'POST',
@@ -113,10 +174,12 @@ export async function callModel(opts: {
 
 /** What the room can actually do right now, so both UIs can say so out loud. */
 export const capabilities = query({
-  args: {},
-  handler: async () => ({
-    inference: Boolean(process.env.ANTHROPIC_API_KEY),
+  args: { guildId: v.optional(v.string()) },
+  handler: async (_ctx, { guildId }) => ({
+    inference: hasInference(guildId),
     research: Boolean(process.env.LINKUP_API_KEY),
+    /** How a turn would be paid for, so a UI can explain itself. */
+    via: process.env.ANTHROPIC_API_KEY ? 'deployment' : hasBridge() ? 'server' : 'none',
   }),
 });
 
@@ -160,6 +223,20 @@ export const recentTranscript = internalQuery({
   },
 });
 
+/**
+ * Where a room's turn gets paid for. `config.guildId` is set when a human starts
+ * a game from inside a server; `config.startedBy` is their uid, which the bridge
+ * checks against that server's membership.
+ */
+export const roomCredentials = internalQuery({
+  args: { roomId: v.id('rooms') },
+  handler: async (ctx, { roomId }) => {
+    const room = await ctx.db.get(roomId);
+    const cfg = (room?.config ?? {}) as { guildId?: string; startedBy?: string };
+    return { guildId: cfg.guildId, startedBy: cfg.startedBy };
+  },
+});
+
 // ─── The turn loop ────────────────────────────────────────────────────────────
 
 /**
@@ -190,7 +267,8 @@ export const runTurn = internalAction({
     eventType: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    if (!hasInference()) {
+    const creds = await ctx.runQuery(internal.agent.roomCredentials, { roomId: args.roomId });
+    if (!hasInference(creds.guildId)) {
       // Visible, once per attempt, and identical in both UIs: a silent room
       // reads as a bug, and this is a missing credential.
       await ctx.runMutation(internal.agent.emitEvent, {
@@ -198,8 +276,9 @@ export const runTurn = internalAction({
         type: 'system',
         actorName: 'room',
         body:
-          `${args.actorName} cannot speak: this deployment has no ANTHROPIC_API_KEY. ` +
-          `Set it with \`npx convex env set ANTHROPIC_API_KEY … --prod\`.`,
+          `${args.actorName} cannot speak: no AI key is reachable. Either set ` +
+          `ANTHROPIC_API_KEY on this deployment, or start the room from a server ` +
+          `whose owner has filled in Server Settings → AI Assistance.`,
         data: { kind: 'missing-capability', capability: 'inference' },
       });
       return { spoke: false, reason: 'no-inference' as const };
@@ -229,6 +308,8 @@ export const runTurn = internalAction({
         messages,
         tools: args.tools as ToolSpec[] | undefined,
         model: args.model,
+        guildId: creds.guildId,
+        onBehalfOf: creds.startedBy,
       });
     } catch (err) {
       await ctx.runMutation(internal.agent.emitEvent, {

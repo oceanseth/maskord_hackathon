@@ -171,7 +171,10 @@ export const start = action({
 
     let motion = topic?.trim() || existing.topic;
     if (!motion) {
-      motion = hasInference() ? await generateTopic(room.memberNames) : FALLBACK_TOPIC;
+      const cfg0 = (room.config ?? {}) as { guildId?: string; startedBy?: string };
+      motion = hasInference(cfg0.guildId)
+        ? await generateTopic(room.memberNames, cfg0)
+        : FALLBACK_TOPIC;
     }
 
     const rules = drawRules();
@@ -204,7 +207,10 @@ export const start = action({
 const FALLBACK_TOPIC =
   'Be it resolved: a convincing lie does more good in the world than an inconvenient truth.';
 
-async function generateTopic(names: string[]): Promise<string> {
+async function generateTopic(
+  names: string[],
+  creds: { guildId?: string; startedBy?: string },
+): Promise<string> {
   const reply = await callModel({
     system:
       'You write debate motions for a live, comedic, high-stakes panel show. One line, ' +
@@ -217,6 +223,8 @@ async function generateTopic(names: string[]): Promise<string> {
       },
     ],
     maxTokens: 200,
+    guildId: creds.guildId,
+    onBehalfOf: creds.startedBy,
   });
   return reply.text.split('\n')[0].trim().slice(0, 300) || FALLBACK_TOPIC;
 }
@@ -380,10 +388,11 @@ export const verdict = internalAction({
     const brief = await ctx.runQuery(internal.debate.verdictBrief, { roomId });
     if (!brief) return { called: false };
 
-    if (!hasInference()) {
+    const creds = await ctx.runQuery(internal.agent.roomCredentials, { roomId });
+    if (!hasInference(creds.guildId)) {
       await ctx.runMutation(internal.agent.emitEvent, {
         roomId, type: 'system', actorName: 'room',
-        body: 'Cannot call the debate: this deployment has no ANTHROPIC_API_KEY.',
+        body: 'Cannot call the debate: no AI key is reachable for this room.',
         data: { kind: 'missing-capability', capability: 'inference' },
       });
       return { called: false };
@@ -413,6 +422,8 @@ export const verdict = internalAction({
         },
       ],
       maxTokens: 1500,
+      guildId: creds.guildId,
+      onBehalfOf: creds.startedBy,
     });
 
     let parsed: {

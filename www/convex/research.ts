@@ -62,6 +62,7 @@ async function assess(
   claim: string,
   query: string,
   sources: Source[],
+  creds: { guildId?: string; startedBy?: string },
 ): Promise<{ finding: string; confidence: number; gaps: string[]; nextQuery: string | null }> {
   const rendered = sources
     .map((s, i) => `[${i + 1}] ${s.title}\n${s.url}\n${s.snippet}`)
@@ -83,6 +84,8 @@ async function assess(
       },
     ],
     maxTokens: 700,
+    guildId: creds.guildId,
+    onBehalfOf: creds.startedBy,
   });
 
   try {
@@ -158,9 +161,10 @@ export const investigate = internalAction({
     maxIterations: v.optional(v.number()),
   },
   handler: async (ctx, { roomId, claim, askedBy, maxIterations }) => {
+    const creds = await ctx.runQuery(internal.agent.roomCredentials, { roomId });
     const missing: string[] = [];
     if (!hasResearch()) missing.push('LINKUP_API_KEY');
-    if (!hasInference()) missing.push('ANTHROPIC_API_KEY');
+    if (!hasInference(creds.guildId)) missing.push('a reachable AI key');
     if (missing.length) {
       await ctx.runMutation(internal.agent.emitEvent, {
         roomId,
@@ -197,7 +201,7 @@ export const investigate = internalAction({
       // action with nothing written, and the room just went quiet.
       let assessed;
       try {
-        assessed = await assess(claim, query, sources);
+        assessed = await assess(claim, query, sources, creds);
       } catch (err) {
         await ctx.runMutation(internal.research.record, {
           roomId, claim, askedBy, iteration, query, sources,
