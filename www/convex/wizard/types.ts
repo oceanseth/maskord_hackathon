@@ -124,7 +124,7 @@ export interface Position {
 
 export type Condition =
   | 'prone' | 'unconscious' | 'dead' | 'stable' | 'dodging' | 'oiled' | 'burning'
-  | 'blessed' | 'slowed' | 'helped' | 'hidden' | 'disengaged' | 'mageArmor';
+  | 'blessed' | 'slowed' | 'helped' | 'hidden' | 'disengaged' | 'mageArmor' | 'shieldDown';
 
 export interface CharacterState {
   sheetKey: SheetKey;

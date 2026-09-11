@@ -431,7 +431,7 @@ async function beginTurn(ctx: MutationCtx, room: Doc<'rooms'>, game: Game) {
   const c = characterById(game, who.id)!;
   // Conditions that end at the start of your turn.
   c.conditions = removeCondition(removeCondition(c.conditions, 'dodging'), 'disengaged');
-  c.conditions = removeCondition(c.conditions, 'slowed');
+  c.conditions = removeCondition(removeCondition(c.conditions, 'slowed'), 'shieldDown');
 
   if (isDead(c)) {
     await save(ctx, game);
@@ -887,9 +887,10 @@ async function perform(ctx: MutationCtx, room: Doc<'rooms'>, game: Game, c: Char
       const inMelee = attack.kind === 'melee' || (attack.kind === 'thrown' && dist <= 5);
       if (inMelee && dist > (attack.reach ?? 5)) throw new Error(`${target.name} is ${dist} ft away — out of reach`);
       if (!inMelee && attack.range && dist > attack.range.long) throw new Error(`${target.name} is ${dist} ft away — out of range`);
-      if (attack.ammo && (c.consumables[attack.ammo] ?? 0) <= 0) throw new Error(`Out of ${attack.ammo}s`);
+      if (attack.ammo && (c.consumables[attack.ammo] ?? 0) <= 0 && !(attack.kind === 'thrown' && inMelee && attack.key !== 'oil')) throw new Error(`Out of ${attack.ammo}s`);
       if (attack.key === 'torch' && !c.resources.torchLit) throw new Error('Light a torch first (Use an Object)');
-      if (attack.ammo) c.consumables[attack.ammo] = (c.consumables[attack.ammo] ?? 0) - 1;
+      if (attack.key === 'battleaxe-2h') c.conditions = addCondition(c.conditions, 'shieldDown');
+      if (attack.ammo && !(attack.kind === 'thrown' && inMelee)) c.consumables[attack.ammo] = (c.consumables[attack.ammo] ?? 0) - 1;
 
       // Advantage: helped, hidden, or the target can't see you; disadvantage: ranged while an enemy is adjacent.
       const adv = c.conditions.includes('helped') || c.conditions.includes('hidden');

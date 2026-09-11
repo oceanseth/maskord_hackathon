@@ -110,6 +110,7 @@ export function passivePerception(sheet: Sheet): number {
 export function characterAC(c: CharacterState): number {
   const sheet = sheetOf(c);
   if (c.conditions.includes('mageArmor') && sheet.key === 'wizard') return 13 + abilityMod(sheet, 'dex');
+  if (c.conditions.includes('shieldDown')) return sheet.ac - 2;
   return sheet.ac;
 }
 

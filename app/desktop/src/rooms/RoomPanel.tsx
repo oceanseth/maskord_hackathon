@@ -15,6 +15,7 @@ export function RoomPanel({
   memberExtra,
   placeholder = 'Say something…',
   onSay,
+  hidePause,
 }: {
   room: RoomHandle;
   header?: ReactNode;
@@ -24,6 +25,8 @@ export function RoomPanel({
   placeholder?: string;
   /** Override where plain text goes (the D&D page sends it to the DM). */
   onSay?: (text: string) => Promise<unknown>;
+  /** Pages with their own pause semantics (the D&D engine) render their own controls. */
+  hidePause?: boolean;
 }) {
   const { room: doc, members, events, me, post, setStatus } = room;
   const status = doc?.status ?? 'lobby';
@@ -43,7 +46,7 @@ export function RoomPanel({
             )}
           </div>
         </div>
-        {me && status === 'running' && (
+        {me && !hidePause && status === 'running' && (
           <button
             className="text-xs px-2 py-1 rounded bg-[#2a2a3e] hover:bg-[#3a3a5e]"
             onClick={() => setStatus('paused', 'checking a character sheet')}
@@ -52,7 +55,7 @@ export function RoomPanel({
             Pause
           </button>
         )}
-        {me && status === 'paused' && (
+        {me && !hidePause && status === 'paused' && (
           <button
             className="text-xs px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600"
             onClick={() => setStatus('running')}

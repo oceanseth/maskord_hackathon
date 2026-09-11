@@ -117,7 +117,8 @@ export const PREGENS: Record<Sheet['key'], Sheet> = {
     hpMax: 12,
     hitDie: '1d10',
     attacks: [
-      { key: 'battleaxe', name: 'Battleaxe', kind: 'melee', toHit: 5, damage: '1d8+3', damageType: 'slashing', reach: 5, note: '1d10+3 two-handed without the shield' },
+      { key: 'battleaxe', name: 'Battleaxe', kind: 'melee', toHit: 5, damage: '1d8+3', damageType: 'slashing', reach: 5, note: 'versatile' },
+      { key: 'battleaxe-2h', name: 'Battleaxe, two hands', kind: 'melee', toHit: 5, damage: '1d10+3', damageType: 'slashing', reach: 5, note: 'shield lowered this turn: AC 16 until your next turn' },
       { key: 'javelin', name: 'Javelin', kind: 'thrown', toHit: 5, damage: '1d6+3', damageType: 'piercing', reach: 5, range: { normal: 30, long: 120 }, ammo: 'javelin' },
     ],
     features: ['Divine Sense', 'Lay on Hands (pool of 5 HP; touch; no effect on undead or constructs)'],
@@ -153,7 +154,7 @@ export const PREGENS: Record<Sheet['key'], Sheet> = {
     hpMax: 9,
     hitDie: '1d8',
     attacks: [
-      { key: 'dagger', name: 'Dagger', kind: 'thrown', toHit: 5, damage: '1d4+3', damageType: 'piercing', reach: 5, range: { normal: 20, long: 60 } },
+      { key: 'dagger', name: 'Dagger', kind: 'thrown', toHit: 5, damage: '1d4+3', damageType: 'piercing', reach: 5, range: { normal: 20, long: 60 }, ammo: 'dagger' },
       { key: 'shortbow', name: 'Shortbow', kind: 'ranged', toHit: 5, damage: '1d6+3', damageType: 'piercing', range: { normal: 80, long: 320 }, ammo: 'arrow' },
       { key: 'oil', name: 'Flask of oil (thrown)', kind: 'thrown', toHit: 5, damage: '0', damageType: 'fire', range: { normal: 20, long: 20 }, ammo: 'oil', note: 'improvised weapon; on a hit the target is covered in oil and takes +5 fire the next time it takes fire damage within a minute' },
     ],

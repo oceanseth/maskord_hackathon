@@ -41,6 +41,7 @@ function WizardRoom({ identity }: { identity: RoomIdentity }) {
           ) : null
         }
         onSay={wiz.phase === 'lobby' ? undefined : (text) => wiz.askDm(text)}
+        hidePause
       />
       {sheetFor && <SheetModal wiz={wiz} memberKey={sheetFor} onClose={() => setSheetFor(null)} />}
     </>
