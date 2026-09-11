@@ -93,6 +93,14 @@ fix.
 - **A RevenueCat `sk_` key against `/v1/subscribers/{id}`.** v1 rejects secret
   keys (code 7723). Use API v2, project-scoped; entitlements come back as ids,
   not lookup keys.
+- **Running the web client dev server against a local Convex.** It loads, then
+  every Convex call fails silently with `Failed to fetch`: `app/desktop/index.html`
+  ships a CSP of `default-src 'self' https: wss:`, which blocks plain-http
+  loopback. The room pages allow `ws://127.0.0.1:* http://127.0.0.1:*`; the
+  client entry does not, and it is off-limits for feature work. Patch it in your
+  working tree for the test and do not commit it. The dev server itself is
+  `cd app/desktop && VITE_CONVEX_URL=http://127.0.0.1:3210 npx vite --config
+  vite.web.config.ts`.
 - **Convex custom domains instead of CloudFront.** They need Convex Pro, and the
   Convex challenge names `convex.site` as the eligibility evidence anyway. Cite
   the origin URL, not the vanity name.
