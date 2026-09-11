@@ -134,6 +134,44 @@ export const twitchOAuth = onRequest(
   },
 );
 
+// ─── Guests ───────────────────────────────────────────────────────────────────
+
+/**
+ * A guest is an anonymous Firebase sign-in — the "Look around as a guest"
+ * button. They get a real uid, so every membership rule keeps working; what
+ * they don't get is a way back into the account.
+ *
+ * Read off the token's sign_in_provider, which is the only discriminator that
+ * holds here: Twitch users are provisioned with createUser() and signed in with
+ * a custom token, so they have no linked providers either, and they must not be
+ * mistaken for guests.
+ *
+ *   guest -> 'anonymous'    Twitch -> 'custom'
+ *   Google -> 'google.com'  email  -> 'password'
+ */
+function isGuest(request: { auth?: { token?: { firebase?: { sign_in_provider?: string } } } }): boolean {
+  return request.auth?.token?.firebase?.sign_in_provider === 'anonymous';
+}
+
+/**
+ * Guests only get into servers that opted in. Membership is created by these
+ * functions alone (`guilds/{id}/members` is `allow create: if false` in the
+ * rules), so this is the whole gate — there is no client path around it.
+ *
+ * Absent settings.allowGuests reads as off, so every server that existed before
+ * this setting stays closed to guests without a migration.
+ */
+async function assertGuestAllowed(
+  request: { auth?: { token?: { firebase?: { sign_in_provider?: string } } } },
+  guildId: string,
+): Promise<void> {
+  if (!isGuest(request)) return;
+  const guildSnap = await db.doc(`guilds/${guildId}`).get();
+  if (guildSnap.data()?.settings?.allowGuests !== true) {
+    throw new HttpsError('permission-denied', 'This server does not accept guests. Sign in to join.');
+  }
+}
+
 // ─── Create Guild ─────────────────────────────────────────────────────────────
 
 // DEFAULT_PERMISSIONS = VIEW_CHANNEL|SEND_MESSAGES|READ_MESSAGE_HISTORY|EMBED_LINKS|ATTACH_FILES|ADD_REACTIONS|CONNECT|SPEAK
@@ -172,6 +210,7 @@ export const createGuildFn = onCall(async (request) => {
       defaultNotifications: 'all',
       explicitContentFilter: 'disabled',
       verificationLevel: 'none',
+      allowGuests: false,
     },
   });
 
@@ -279,6 +318,8 @@ export const joinGuildWithInvite = onCall(async (request) => {
   const { guildId } = invite;
   const userId = request.auth.uid;
 
+  await assertGuestAllowed(request, guildId);
+
   // Check if already a member
   const memberSnap = await db.doc(`guilds/${guildId}/members/${userId}`).get();
   if (memberSnap.exists) {
@@ -352,6 +393,8 @@ export const joinGuildAsMutualFriend = onCall(async (request) => {
   const guildSnap = await db.doc(`guilds/${guildId}`).get();
   if (!guildSnap.exists) throw new HttpsError('not-found', 'Guild not found');
   const ownerId = guildSnap.data()!.ownerId as string;
+
+  await assertGuestAllowed(request, guildId);
 
   // Verify the requester is a mutual friend of the owner.
   // Friendship ID uses sorted UIDs: [uid1, uid2].sort().join('__')
