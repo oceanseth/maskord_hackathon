@@ -71,7 +71,7 @@ function OverviewTab({ guildId, channel }: { guildId: string; channel: Channel }
 
       {/* Switching an existing channel is the useful half: a server already has
           its channels, and nobody wants to remake one to play. */}
-      {channel.type === 'text' && (
+      {channel.type !== 'category' && (
         <div className="space-y-1.5">
           <label className="block text-xs font-semibold text-[#94a3b8] uppercase tracking-wide">
             Mode

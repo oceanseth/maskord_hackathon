@@ -1,4 +1,6 @@
-import { useAuth } from '@maskord/shared';
+import { useAuth, useGuildChannels } from '@maskord/shared';
+import type { Channel } from '@maskord/shared';
+import { useVoiceCtx } from '../voice/VoiceProvider';
 import type { ChannelMode } from '@maskord/shared';
 import type { RoomIdentity } from '../../rooms/useRoom';
 import DebateChannel from '../../rooms/debate/DebateChannel';
@@ -34,6 +36,8 @@ interface Props {
  */
 export default function ChannelGameView({ guildId, channelId, mode }: Props) {
   const { firebaseUser, profile } = useAuth();
+  const channels = useGuildChannels(guildId);
+  const isVoice = channels.find((c: Channel) => c.id === channelId)?.type === 'voice';
 
   const identity: RoomIdentity | null =
     firebaseUser && profile
@@ -50,7 +54,26 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
     );
   }
 
-  if (mode === 'debate') return <DebateChannel guildId={guildId} channelId={channelId} />;
+  // A voice game channel is a table you talk at: the call is already joined by
+  // the sidebar, so all the board owes the room is the controls it would
+  // otherwise have lost with the participant grid.
+  const board =
+    mode === 'dnd' ? (
+      <DndChannel guildId={guildId} channelId={channelId} />
+    ) : mode === 'debate' ? (
+      <DebateChannel guildId={guildId} channelId={channelId} />
+    ) : null;
+
+  if (board) {
+    return isVoice ? (
+      <div className="flex-1 flex flex-col min-h-0 min-w-0">
+        <VoiceBar />
+        {board}
+      </div>
+    ) : (
+      board
+    );
+  }
 
   // Every mode with a board returns above. Anything else is a mode somebody
   // added to the type without a view, which should say so rather than render
@@ -63,6 +86,41 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
         board yet.
       </p>
     </Centered>
+  );
+}
+
+/**
+ * The strip a voice game channel keeps when the participant grid gives way to a
+ * board: who is in the call, and the two buttons nobody should have to leave
+ * the table to reach.
+ */
+function VoiceBar() {
+  const { participants, isMuted, isDeafened, isConnected, toggleMute, toggleDeafen, hangUp } =
+    useVoiceCtx();
+  if (!isConnected) return null;
+  return (
+    <div className="h-9 flex items-center gap-2 px-3 border-b border-[#1e1e2e] bg-[#0a0a12] flex-shrink-0 text-xs">
+      <span className="text-emerald-400">● live</span>
+      <span className="text-[#8b8fa3] truncate">
+        {participants.length} in the call
+        {participants.some((p) => p.state?.speaking) ? ' · someone is speaking' : ''}
+      </span>
+      <button
+        onClick={toggleMute}
+        className={`ml-auto px-2 py-0.5 rounded ${isMuted ? 'bg-red-900/50 text-red-200' : 'bg-[#2a2a3e] text-[#cbd5e1]'}`}
+      >
+        {isMuted ? 'Unmute' : 'Mute'}
+      </button>
+      <button
+        onClick={toggleDeafen}
+        className={`px-2 py-0.5 rounded ${isDeafened ? 'bg-red-900/50 text-red-200' : 'bg-[#2a2a3e] text-[#cbd5e1]'}`}
+      >
+        {isDeafened ? 'Undeafen' : 'Deafen'}
+      </button>
+      <button onClick={hangUp} className="px-2 py-0.5 rounded bg-[#2a2a3e] hover:bg-red-900/50 text-[#cbd5e1]">
+        Leave
+      </button>
+    </div>
   );
 }
 

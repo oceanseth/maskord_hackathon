@@ -43,13 +43,13 @@ export default function CreateChannelModal({ defaultType = 'text', categoryId = 
     setLoading(true);
     setError(null);
     try {
-      // A mode only means anything on a text channel; a voice channel or a
-      // category carrying one would be a lie the settings panel then shows.
+      // A category has no view to replace, so a mode on one would be a setting
+      // that does nothing.
       await onCreate(
         name.trim().toLowerCase().replace(/\s+/g, '-'),
         type,
         categoryId,
-        type === 'text' ? mode : 'default',
+        type === 'category' ? 'default' : mode,
       );
       onClose();
     } catch (err) {
@@ -149,9 +149,10 @@ export default function CreateChannelModal({ defaultType = 'text', categoryId = 
           </div>
         </div>
 
-        {/* Mode — text channels only. A voice channel or a category has no view
-            to replace, so offering it there would be a setting that does nothing. */}
-        {type === 'text' && (
+        {/* Mode — text and voice, not categories. A voice game channel is a
+            table you talk at: the audio session is the same one a voice channel
+            opens, and the game replaces the participant grid. */}
+        {type !== 'category' && (
           <div>
             <label className="block text-xs font-semibold text-[#94a3b8] uppercase tracking-wide mb-1.5">
               Mode
