@@ -84,7 +84,7 @@ function OverviewTab({ guildId, channel }: { guildId: string; channel: Channel }
           >
             <option value="default">Default</option>
             <option value="debate">Debate floor</option>
-            <option value="dnd">D&amp;D table</option>
+            <option value="dndcampaign">D&amp;D table</option>
           </select>
           <p className="text-xs text-[#6b7280]">
             The messages stay exactly where they are — only the view over them changes, so

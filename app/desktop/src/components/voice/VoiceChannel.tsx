@@ -20,11 +20,17 @@ import { inviteUrl as buildInviteUrl } from '../../lib/appUrl';
 interface Props {
   guildId: string;
   channelId: string;
+  /**
+   * Render as a strip above something else — a game board — rather than as the
+   * whole pane. Same tiles, same controls, same avatar switcher: a table you
+   * talk at should not be a second, poorer voice UI.
+   */
+  compact?: boolean;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VoiceChannel({ guildId, channelId }: Props) {
+export default function VoiceChannel({ guildId, channelId, compact = false }: Props) {
   const { firebaseUser } = useAuth();
   const {
     participants, localStream, isMuted, isDeafened, isConnected, localSpeaking,
@@ -143,9 +149,9 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
   });
 
   return (
-    <div className="flex-1 flex flex-col bg-[#0e0e16]">
+    <div className={compact ? 'flex flex-col bg-[#0e0e16] border-b border-[#1e1e2e]' : 'flex-1 flex flex-col bg-[#0e0e16]'}>
       {/* Header */}
-      <div className="h-12 flex items-center gap-2 px-4 border-b border-[#1e1e2e]">
+      <div className={`h-12 items-center gap-2 px-4 border-b border-[#1e1e2e] ${compact ? 'hidden' : 'flex'}`}>
         <MobileBackButton onClick={() => useAppStore.getState().setActiveChannel(null, 'voice')} />
         <svg width="18" height="18" viewBox="0 0 24 24" fill="rgba(168,85,247,0.8)">
           <path d="M12 3a9 9 0 0 1 9 9h-2a7 7 0 0 0-7-7V3zm0 4a5 5 0 0 1 5 5h-2a3 3 0 0 0-3-3V7zm-1 5.5c0-.83.67-1.5 1.5-1.5s1.5.67 1.5 1.5-.67 1.5-1.5 1.5-1.5-.67-1.5-1.5zM3 11h2a7 7 0 0 0 7 7v2a9 9 0 0 1-9-9z" />
@@ -208,8 +214,14 @@ export default function VoiceChannel({ guildId, channelId }: Props) {
       {/* Participant grid — scrolls on its own so it never pushes the chat or
           controls off-screen as more people join (min-h-0 lets a flex child
           actually shrink + scroll instead of growing to fit its content). */}
-      <div className="flex-1 min-h-0 p-6 overflow-y-auto">
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr">
+      <div className={compact ? 'flex-shrink-0 max-h-56 overflow-y-auto p-3' : 'flex-1 min-h-0 p-6 overflow-y-auto'}>
+        <div
+          className={
+            compact
+              ? 'grid grid-cols-3 md:grid-cols-5 lg:grid-cols-7 gap-2 auto-rows-fr'
+              : 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr'
+          }
+        >
           {/* Local user tile — when a mask is on, show ONLY the mask identity. */}
           {selfInfo && firebaseUser && (() => {
             const selfAvatarUrl = selectedMask?.thumbnailUrl || selfInfo.avatarUrl;

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useGuildChannels } from '@maskord/shared';
+import { useGuildChannels, normalizeChannelMode } from '@maskord/shared';
 import type { Channel } from '@maskord/shared';
 import { useAppStore } from '../store/app';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -29,7 +29,7 @@ export default function MainLayout() {
   // it can change while the channel is open, and the store's active-channel
   // tuple is set from eight call sites that have no reason to learn about modes.
   const channels = useGuildChannels(activeGuildId ?? null);
-  const mode = channels.find((c: Channel) => c.id === activeChannelId)?.mode ?? 'default';
+  const mode = normalizeChannelMode(channels.find((c: Channel) => c.id === activeChannelId)?.mode);
   // Voice counts too: `setVoiceChannel` joins the call from the sidebar, and
   // what the main pane draws is independent of it — so a voice game channel
   // keeps its audio and shows the table instead of a grid of avatars.

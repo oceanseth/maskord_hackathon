@@ -119,7 +119,18 @@ export interface ChannelAvatar {
  * the view over it differs. Making D&D a `ChannelType` would fork all of that.
  * Absent means `'default'`; every channel that existed before this is one.
  */
-export type ChannelMode = 'default' | 'dnd' | 'debate';
+export type ChannelMode = 'default' | 'dndcampaign' | 'debate';
+
+/**
+ * `dnd` was the original value and reads as "do not disturb" to anyone who has
+ * used Discord, so it became `dndcampaign`. Channels written before the rename
+ * still hold the old string, and normalising on read costs less than a
+ * migration that has to find every one of them.
+ */
+export function normalizeChannelMode(mode: string | undefined): ChannelMode {
+  if (mode === 'dnd') return 'dndcampaign';
+  return (mode as ChannelMode) ?? 'default';
+}
 
 export interface Channel {
   id: string;
