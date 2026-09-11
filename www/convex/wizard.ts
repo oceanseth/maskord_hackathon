@@ -5,6 +5,7 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent, joinMember } from './rooms';
 import { hasInference } from './agent';
+import { hasResearch } from './research';
 import { PREGENS, SHEET_KEYS } from './wizard/pregens';
 import { BEACH_ZOMBIE_START, HOUSE_MASKS, MAPS, SPELLS, STAT_BLOCKS, ZOMBIE_NAMES } from './wizard/scenario';
 import {
@@ -67,6 +68,17 @@ const ZOMBIES_RISE_AFTER_MS = 9000;
 const ASK_DM_COOLDOWN_MS = 15_000;
 /** The research branch runs up to three searches and three assessments, so it is rarer. */
 const RESEARCH_COOLDOWN_MS = 60_000;
+
+/**
+ * `research.investigate` needs both a search key and a model (it searches, then
+ * has the model weigh the results). With only one of the two set it refuses and
+ * writes "Cannot research ..." into the transcript; the table would rather
+ * play on without sources than show a judge that line, so nothing schedules a
+ * pass unless both halves are reachable.
+ */
+function canResearch(room: Doc<'rooms'>): boolean {
+  return hasResearch() && hasInference((room.config as { guildId?: string } | undefined)?.guildId);
+}
 
 const rng: Rng = () => Math.random();
 
@@ -394,12 +406,14 @@ export const zombiesRise = internalMutation({
 
     // Something new on the board: look it up. The findings land in the room as
     // `research` events and in the research table, where the DM prompt reads them.
-    await ctx.scheduler.runAfter(0, internal.research.investigate, {
-      roomId,
-      claim: 'Zombies in D&D 5th edition (SRD): Undead Fortitude, and whether a flask of oil and fire is an effective tactic against them.',
-      askedBy: room.hostName,
-      maxIterations: 2,
-    });
+    if (canResearch(room)) {
+      await ctx.scheduler.runAfter(0, internal.research.investigate, {
+        roomId,
+        claim: 'Zombies in D&D 5th edition (SRD): Undead Fortitude, and whether a flask of oil and fire is an effective tactic against them.',
+        askedBy: room.hostName,
+        maxIterations: 2,
+      });
+    }
 
     combatants.sort((a, b) => b.initiative - a.initiative || (a.side === 'party' ? -1 : 1));
     game.combatants = combatants;
@@ -681,7 +695,7 @@ export const onToolCall = internalMutation({
     if (input.say) {
       await appendEvent(ctx, roomId, { type: 'say', actorKey: memberKey, actorName: c.name, body: String(input.say).slice(0, 600) });
     }
-    if (input.research && String(input.research).trim()) {
+    if (input.research && String(input.research).trim() && canResearch(room)) {
       await ctx.scheduler.runAfter(0, internal.research.investigate, { roomId, claim: String(input.research).slice(0, 300), askedBy: c.name, maxIterations: 2 });
     }
     try {
@@ -1316,7 +1330,7 @@ export const askDm = mutation({
       return { answered: false as const, reason: 'cooldown' as const };
     }
     const wantsSources = /\?/.test(text) && /\b(really|actually|can|does|would|is it true|rules?|how (?:does|do)|source|look (?:it )?up|research)\b/i.test(text);
-    const asksForSources = wantsSources && now - (cfg.lastResearchAt ?? 0) >= RESEARCH_COOLDOWN_MS;
+    const asksForSources = wantsSources && canResearch(room) && now - (cfg.lastResearchAt ?? 0) >= RESEARCH_COOLDOWN_MS;
     await ctx.db.patch(roomId, { config: { ...(room.config ?? {}), lastAskDmAt: now, ...(asksForSources ? { lastResearchAt: now } : {}) } });
     if (asksForSources) {
       await ctx.scheduler.runAfter(0, internal.research.investigate, {
