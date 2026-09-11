@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useGuildChannels } from '@maskord/shared';
 import type { Channel } from '@maskord/shared';
 import { useAppStore } from '../store/app';
@@ -35,6 +36,16 @@ export default function MainLayout() {
   // both — otherwise three flex columns get crushed into ~50px each.
   const contentActive = !!activeDmPartnerId
     || (activeView === 'guild' && !!activeGuildId && !!activeChannelId);
+  // Collapsing is a desktop affordance: on mobile the sidebars already give way
+  // to the content pane, and a second mechanism would fight the first.
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem('maskord.sidebars.collapsed') === '1',
+  );
+  useEffect(() => {
+    localStorage.setItem('maskord.sidebars.collapsed', collapsed ? '1' : '0');
+  }, [collapsed]);
+
+  const hidden = collapsed && !isMobile;
   const showSidebars = !isMobile || !contentActive;
   const showContent  = !isMobile || contentActive;
 
@@ -43,9 +54,17 @@ export default function MainLayout() {
       {/* h-screen (100vh) is taller than the visible area on mobile browsers, which
           pushes bottom bars (e.g. voice controls) under the address/nav chrome.
           100dvh tracks the actual visible viewport; h-screen is the fallback. */}
-      <div className="flex h-screen [height:100dvh] overflow-hidden bg-[#0a0a0f]">
+      <div className="relative flex h-screen [height:100dvh] overflow-hidden bg-[#0a0a0f]">
         {showSidebars && (
-          <>
+          // Slid out rather than unmounted: a collapsed ChannelSidebar keeps its
+          // voice connection and its scroll position, and coming back is
+          // instant instead of a remount.
+          <div
+            className={`flex min-h-0 transition-[margin] duration-200 ease-out ${
+              hidden ? '-ml-[312px]' : 'ml-0'
+            }`}
+            aria-hidden={hidden}
+          >
             {/* Guild list — leftmost narrow column */}
             <GuildSidebar />
 
@@ -54,7 +73,24 @@ export default function MainLayout() {
               ? <ChannelSidebar guildId={activeGuildId} />
               : <HomePanel />
             }
-          </>
+          </div>
+        )}
+
+        {/* The handle. Sits above everything so it stays reachable once the
+            columns it hides have slid away — otherwise collapsing is one-way. */}
+        {!isMobile && (
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            title={hidden ? 'Show servers and channels' : 'Hide servers and channels'}
+            aria-label={hidden ? 'Show servers and channels' : 'Hide servers and channels'}
+            className={`absolute top-1.5 z-40 w-6 h-6 rounded-md flex items-center justify-center text-[#6b7280] hover:text-white hover:bg-[#1e1e2e] transition-all duration-200 no-drag ${
+              hidden ? 'left-1.5' : 'left-[22px]'
+            }`}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <path d={hidden ? 'M9 6l6 6-6 6' : 'M15 6l-6 6 6 6'} />
+            </svg>
+          </button>
         )}
 
         {/* Main content panel */}
