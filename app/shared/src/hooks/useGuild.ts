@@ -165,6 +165,10 @@ export async function createChannel(
     // Written only when it is not the default, so existing channels and plain
     // ones look identical in Firestore.
     ...(data.mode && data.mode !== 'default' ? { mode: data.mode } : {}),
+    // A campaign channel is born with the host listening: the dungeon master
+    // has to hear the table to decide whether a line was meant for it, and a
+    // room that starts on "mention only" is one where nobody thinks to ask.
+    ...(data.mode === 'dndcampaign' ? { claudeMode: 'all' as const } : {}),
     position: data.position ?? 999,
     topic: null,
     slowmode: 0,
