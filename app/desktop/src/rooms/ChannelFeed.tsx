@@ -75,11 +75,13 @@ export function ChannelFeed({
         key: `m:${m.id}`,
         message: m,
       }));
-    // The avatar's own replies come back through the room as `say`/`host`
-    // events and are mirrored into messages; showing the transcript copy too
-    // would be a third of the same line.
+    // Everything said in the channel, including the orchestrator's answers.
+    // Masky replies through the *transcript*, not through the room — so with
+    // the voice panel's own chat hidden this is the only place its words can
+    // appear. Room masks are a different path (`say`/`host` events) and do not
+    // collide.
     const fromSpeech: FeedItem[] = utterances
-      .filter((u) => u.source === 'stt' || u.source === 'typed')
+      .filter((u) => u.source !== 'masky-rewrite')
       .map((u) => ({
         kind: 'said',
         at: u.createdAt ? u.createdAt.toMillis() : Date.now(),
@@ -144,6 +146,10 @@ export function ChannelFeed({
  */
 function SpokenLine({ said, fallbackName }: { said: TranscriptUtterance; fallbackName: string }) {
   const name = said.maskName ?? fallbackName;
+  // Only speech is hedged. A typed line is what someone wrote, and the avatar's
+  // reply is what it actually said — neither should be dressed as a transcript
+  // that might have misheard.
+  const transcribed = said.source === 'stt';
   return (
     <div className="flex gap-2 text-sm">
       {said.maskAvatarUrl ? (
@@ -154,9 +160,15 @@ function SpokenLine({ said, fallbackName }: { said: TranscriptUtterance; fallbac
         </span>
       )}
       <div className="min-w-0 flex-1">
-        <span className="font-semibold text-sky-200">{name}</span>{' '}
-        <span className="text-[10px] text-[#4b5563]">said</span>
-        <p className="whitespace-pre-wrap break-words text-[#c8d0e0] italic leading-relaxed">{said.text}</p>
+        <span className={`font-semibold ${transcribed ? 'text-sky-200' : 'text-white'}`}>{name}</span>{' '}
+        {transcribed && <span className="text-[10px] text-[#4b5563]">said</span>}
+        <p
+          className={`whitespace-pre-wrap break-words leading-relaxed ${
+            transcribed ? 'text-[#c8d0e0] italic' : 'text-[#d4d8e0]'
+          }`}
+        >
+          {said.text}
+        </p>
       </div>
     </div>
   );

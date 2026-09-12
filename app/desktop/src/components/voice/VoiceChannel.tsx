@@ -286,8 +286,11 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
         </div>
       </div>
 
-      {/* Chat panel — shown when AI assistance is on for this channel */}
-      {transcriptOn && (
+      {/* Chat panel — shown when AI assistance is on for this channel.
+          Never in compact: the surface underneath is the channel's one
+          conversation, and a second chat above it shows every spoken line
+          twice while the avatar answers into only one of them. */}
+      {transcriptOn && !compact && (
         <ChatPanel
           guildId={guildId}
           channelId={channelId}
