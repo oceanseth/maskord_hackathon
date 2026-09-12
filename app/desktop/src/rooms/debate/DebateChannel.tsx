@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { useAuth, useGuildChannels, sendMessage } from '@maskord/shared';
+import type { Channel } from '@maskord/shared';
 import { useMutation, useQuery, useAction } from 'convex/react';
 import { api } from '@maskord/convex';
 import MessageInput from '../../components/channel/MessageInput';
@@ -40,7 +41,10 @@ export default function DebateChannel({ guildId, channelId }: Props) {
       : null;
 
   const channels = useGuildChannels(guildId);
-  const channelName = channels.find((c) => c.id === channelId)?.name ?? '';
+  const channel = channels.find((c: Channel) => c.id === channelId);
+  const channelName = channel?.name ?? '';
+  /** A voice channel shows every participant as a tile already; one roster is enough. */
+  const showRoster = channel?.type !== 'voice';
   const slug = debateChannelSlug(channelId);
 
   // Carried from creation, not from `start`: the bridge that spends the
@@ -121,7 +125,7 @@ export default function DebateChannel({ guildId, channelId }: Props) {
 
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          <MemberStrip members={room.members} meKey={room.me?.memberKey} />
+          {showRoster && <MemberStrip members={room.members} meKey={room.me?.memberKey} />}
           <ChannelFeed
             guildId={guildId}
             channelId={channelId}

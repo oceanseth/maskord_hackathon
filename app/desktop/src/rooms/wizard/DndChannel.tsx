@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useAuth, useGuildChannels, sendMessage } from '@maskord/shared';
+import type { Channel } from '@maskord/shared';
 import MessageInput from '../../components/channel/MessageInput';
 import MobileBackButton from '../../components/ui/MobileBackButton';
 import { useAppStore } from '../../store/app';
@@ -43,7 +44,12 @@ export default function DndChannel({ guildId, channelId }: Props) {
     firebaseUser && profile ? { key: firebaseUser.uid, name: profile.displayName, avatarUrl: profile.avatarUrl } : null;
 
   const channels = useGuildChannels(guildId);
-  const channelName = channels.find((c) => c.id === channelId)?.name ?? '';
+  const channel = channels.find((c: Channel) => c.id === channelId);
+  const channelName = channel?.name ?? '';
+  // A voice channel already shows every participant as a tile above the board,
+  // with masks, speaking rings and the avatar switcher. A second roster under
+  // it is the same people twice.
+  const showRoster = channel?.type !== 'voice';
   const slug = channelRoomSlug(channelId);
   // The guild is known from the first render, so the room carries it from
   // creation rather than from `start`: the bridge that mirrors lines into the
@@ -131,7 +137,7 @@ export default function DndChannel({ guildId, channelId }: Props) {
       <div className="flex-1 flex min-h-0">
         {/* The conversation: channel messages and the transcript, one stream. */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          <MemberStrip
+          {showRoster && <MemberStrip
             members={room.members}
             meKey={room.me?.memberKey}
             extra={(m) =>
@@ -141,7 +147,7 @@ export default function DndChannel({ guildId, channelId }: Props) {
                 </button>
               ) : null
             }
-          />
+          />}
           <ChannelFeed guildId={guildId} channelId={channelId} events={room.events} humanKeys={room.members.filter((m) => m.kind === 'human').map((m) => m.memberKey)} currentUserId={firebaseUser?.uid} />
           {sendError && <p className="px-4 pb-1 text-xs text-red-400">{sendError}</p>}
           {identity ? (

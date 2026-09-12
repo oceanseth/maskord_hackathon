@@ -5,6 +5,7 @@ import {
   DEFAULT_CLAUDE_AVATAR,
 } from '@maskord/shared';
 import type { Channel, ChannelMode } from '@maskord/shared';
+import { normalizeChannelMode } from '@maskord/shared';
 import Modal from '../ui/Modal';
 import { useMaskyAvatars } from '../../hooks/useMaskyAvatars';
 
@@ -109,13 +110,20 @@ function AITab({ guildId, channel }: { guildId: string; channel: Channel }) {
   const avatar       = guildAvatars.avatarGroups.find((a) => a.id === avatarId);
   const avatarName   = avatar?.displayName ?? DEFAULT_CLAUDE_AVATAR.fallbackDisplayName;
 
-  const [mode,      setMode]      = useState<'off' | 'mention' | 'all'>(channel.claudeMode ?? 'off');
+  const campaign = normalizeChannelMode(channel.mode) === 'dndcampaign';
+  const [mode,      setMode]      = useState<'off' | 'mention' | 'all'>(
+    campaign ? 'all' : (channel.claudeMode ?? 'off'),
+  );
   const [mediaMode, setMediaMode] = useState<'audio' | 'video'>(channel.claudeMediaMode ?? 'audio');
   const [status,    setStatus]    = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [error,     setError]     = useState<string | null>(null);
 
   useEffect(() => {
-    setMode(channel.claudeMode ?? 'off');
+    setMode(campaign ? 'all' : (channel.claudeMode ?? 'off'));
+    // A campaign channel that was made before this, or switched into the mode
+    // later, is corrected on open rather than left in a state its own UI says
+    // is impossible.
+    if (campaign && channel.claudeMode !== 'all') void save({ claudeMode: 'all' });
     setMediaMode(channel.claudeMediaMode ?? 'audio');
   }, [channel.id, channel.claudeMode, channel.claudeMediaMode]);
 
@@ -166,16 +174,26 @@ function AITab({ guildId, channel }: { guildId: string; channel: Channel }) {
         </p>
       </div>
 
+      {campaign && (
+        <p className="text-xs rounded border border-violet-700/40 bg-violet-900/20 text-violet-200 px-3 py-2">
+          This channel runs a campaign, so the host listens to everything and decides for itself
+          whether a line was meant for it. Off and mention-only are unavailable here — a dungeon
+          master that only hears its own name is not a dungeon master.
+        </p>
+      )}
+
       <ModeRow
         label="Off"
         desc="Members can chat freely; the avatar ignores everything in this channel."
         active={mode === 'off'}
+        disabled={campaign}
         onClick={() => pickMode('off')}
       />
       <ModeRow
         label="Mention only"
         desc={`Replies only when a message contains @${avatarName} or, in voice channels, when someone says the avatar's wake word.`}
         active={mode === 'mention'}
+        disabled={campaign}
         onClick={() => pickMode('mention')}
       />
       <ModeRow
@@ -226,11 +244,12 @@ function SaveStatus({ status }: { status: 'idle' | 'saving' | 'saved' | 'error' 
   return <span className={`text-[10px] font-medium uppercase tracking-wider ${color}`}>{label}</span>;
 }
 
-function ModeRow({ label, desc, active, onClick }: {
-  label: string; desc: string; active: boolean; onClick: () => void;
+function ModeRow({ label, desc, active, onClick, disabled }: {
+  label: string; desc: string; active: boolean; onClick: () => void; disabled?: boolean;
 }) {
   return (
     <button
+      disabled={disabled}
       onClick={onClick}
       className={`w-full flex items-start gap-3 px-4 py-3 rounded-lg border text-left transition-colors
         ${active

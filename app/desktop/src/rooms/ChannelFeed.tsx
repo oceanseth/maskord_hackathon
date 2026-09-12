@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { useGuildMembers, useMessages, useUserProfiles } from '@maskord/shared';
-import type { Message } from '@maskord/shared';
+import { useGuildMembers, useMessages, useTranscript, useUserProfiles } from '@maskord/shared';
+import type { Message, TranscriptUtterance } from '@maskord/shared';
 import { formatDistanceToNow } from 'date-fns';
 import MessageAttachments from '../components/channel/MessageAttachments';
 import { DefaultEvent } from './RoomPanel';
@@ -22,7 +22,11 @@ import type { RoomEvent } from './useRoom';
 /** Event types the bridge mirrors into the channel; keep in step with `MIRRORED` in `www/convex/rooms.ts`. */
 const MIRRORED: ReadonlySet<RoomEvent['type']> = new Set(['say', 'action', 'host', 'research']);
 
-type FeedItem = { at: number; key: string } & ({ kind: 'message'; message: Message } | { kind: 'event'; event: RoomEvent });
+type FeedItem = { at: number; key: string } & (
+  | { kind: 'message'; message: Message }
+  | { kind: 'event'; event: RoomEvent }
+  | { kind: 'said'; said: TranscriptUtterance }
+);
 
 export function ChannelFeed({
   guildId,
@@ -38,6 +42,10 @@ export function ChannelFeed({
   currentUserId?: string;
 }) {
   const { messages, loading, hasMore, loadMore } = useMessages(guildId, channelId);
+  // What people actually said out loud. Voice utterances land in the channel's
+  // transcript, not in `messages`, so without this a spoken table is a silent
+  // one on screen — which is what it looked like.
+  const { utterances } = useTranscript(guildId, channelId);
   const members = useGuildMembers(guildId);
   const authorIds = useMemo(() => [...new Set(messages.map((m) => m.authorId))], [messages]);
   const profiles = useUserProfiles(authorIds);
@@ -67,8 +75,20 @@ export function ChannelFeed({
         key: `m:${m.id}`,
         message: m,
       }));
-    return [...fromMessages, ...fromEvents].sort((a, b) => a.at - b.at);
-  }, [events, messages, humanKeys, guildId]);
+    // The avatar's own replies come back through the room as `say`/`host`
+    // events and are mirrored into messages; showing the transcript copy too
+    // would be a third of the same line.
+    const fromSpeech: FeedItem[] = utterances
+      .filter((u) => u.source === 'stt' || u.source === 'typed')
+      .map((u) => ({
+        kind: 'said',
+        at: u.createdAt ? u.createdAt.toMillis() : Date.now(),
+        key: `s:${u.id}`,
+        said: u,
+      }));
+
+    return [...fromMessages, ...fromEvents, ...fromSpeech].sort((a, b) => a.at - b.at);
+  }, [events, messages, utterances, humanKeys, guildId]);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' });
@@ -106,11 +126,38 @@ export function ChannelFeed({
           <div key={item.key}>
             <DefaultEvent e={item.event} />
           </div>
+        ) : item.kind === 'said' ? (
+          <SpokenLine key={item.key} said={item.said} fallbackName={nameFor(item.said.userId).name} />
         ) : (
           <MessageLine key={item.key} message={item.message} own={item.message.authorId === currentUserId} author={nameFor(item.message.authorId)} />
         ),
       )}
       <div ref={bottom} />
+    </div>
+  );
+}
+
+/**
+ * Something said out loud, rendered as speech rather than as a message: it is a
+ * transcript line, it can be wrong, and it should not look like something the
+ * speaker typed and stands behind.
+ */
+function SpokenLine({ said, fallbackName }: { said: TranscriptUtterance; fallbackName: string }) {
+  const name = said.maskName ?? fallbackName;
+  return (
+    <div className="flex gap-2 text-sm">
+      {said.maskAvatarUrl ? (
+        <img src={said.maskAvatarUrl} alt="" className="w-5 h-5 rounded-full object-cover mt-0.5 shrink-0" />
+      ) : (
+        <span className="w-5 h-5 rounded-full bg-sky-700/40 text-[10px] font-semibold text-sky-200 inline-flex items-center justify-center mt-0.5 shrink-0">
+          🎙
+        </span>
+      )}
+      <div className="min-w-0 flex-1">
+        <span className="font-semibold text-sky-200">{name}</span>{' '}
+        <span className="text-[10px] text-[#4b5563]">said</span>
+        <p className="whitespace-pre-wrap break-words text-[#c8d0e0] italic leading-relaxed">{said.text}</p>
+      </div>
     </div>
   );
 }
