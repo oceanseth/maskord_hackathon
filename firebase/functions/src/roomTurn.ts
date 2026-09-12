@@ -22,14 +22,18 @@ import { defineSecret } from 'firebase-functions/params';
 const bridgeSecret = defineSecret('ROOM_BRIDGE_SECRET');
 
 /**
- * Which guilds this bridge will spend for, comma-separated. **Fails closed** —
- * unset means no room can spend anything.
+ * Which guilds this bridge will spend for, comma-separated — or `*` for "any
+ * server that has opted in by configuring its own key".
  *
- * This is the load-bearing control, not the membership check below. A room's
- * `config.guildId` is set by a client through `patchConfig`, so on its own it is
- * an attacker-supplied value: without an allowlist, anyone who can open a room
- * could point it at another server and spend that server's key. The allowlist
- * means the worst case is spending the key of a guild we deliberately opted in.
+ * `*` is the normal setting, because a manual list is the wrong shape for the
+ * rule everyone actually expects: *put your key in your server, and your
+ * server's rooms can think*. Opting in is the owner typing a key into Server
+ * Settings; nobody should have to be added to a secret by hand afterwards.
+ *
+ * What keeps `*` honest is the membership check below, which is now required
+ * rather than optional: a guild's key is only ever spent on behalf of somebody
+ * who is in that guild. Keep an explicit list here only to lock the bridge to
+ * named servers while something is being debugged.
  */
 const bridgeGuilds = defineSecret('ROOM_BRIDGE_GUILDS');
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
@@ -71,13 +75,14 @@ export const roomTurn = onRequest(
       return;
     }
 
-    // Allowlist first: a room's config.guildId is client-supplied, so it is a
-    // request, not a permission.
+    // A room's `config.guildId` is client-supplied, so it is a request rather
+    // than a permission. `*` delegates the decision to the server owner, who
+    // grants it by configuring a key at all.
     const allowed = (bridgeGuilds.value() ?? '')
       .split(',')
       .map((g) => g.trim())
       .filter(Boolean);
-    if (!allowed.includes(guildId)) {
+    if (!allowed.includes('*') && !allowed.includes(guildId)) {
       res.status(403).json({
         error: 'guild-not-allowed',
         message: `Server ${guildId} is not in ROOM_BRIDGE_GUILDS.`,
@@ -87,15 +92,21 @@ export const roomTurn = onRequest(
 
     const db = admin.firestore();
 
-    // Spend a guild's key only for someone actually in that guild. The client
-    // cannot be trusted to assert this, which is the other half of why the key
-    // never goes to the client.
-    if (memberUid) {
-      const member = await db.doc(`guilds/${guildId}/members/${memberUid}`).get();
-      if (!member.exists) {
-        res.status(403).json({ error: 'Not a member of that server' });
-        return;
-      }
+    // Spend a guild's key only on behalf of somebody in that guild — and
+    // *required*, not skipped when the caller omits a uid. It used to be
+    // conditional, which meant a caller could avoid the check entirely by
+    // saying nothing, leaving the allowlist as the only real boundary.
+    if (!memberUid) {
+      res.status(403).json({
+        error: 'member-required',
+        message: 'A turn must name the member it is thinking for.',
+      });
+      return;
+    }
+    const member = await db.doc(`guilds/${guildId}/members/${memberUid}`).get();
+    if (!member.exists) {
+      res.status(403).json({ error: 'Not a member of that server' });
+      return;
     }
 
     const guild = await db.doc(`guilds/${guildId}`).get();
