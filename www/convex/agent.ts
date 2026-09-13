@@ -233,7 +233,25 @@ export const roomCredentials = internalQuery({
   handler: async (ctx, { roomId }) => {
     const room = await ctx.db.get(roomId);
     const cfg = (room?.config ?? {}) as { guildId?: string; startedBy?: string };
-    return { guildId: cfg.guildId, startedBy: cfg.startedBy };
+
+    // Whose membership justifies spending the server's key. `startedBy` is only
+    // set once a table or debate has *started*, and the host talks before that —
+    // welcoming the room, offering campaigns, waiting for sheets. Those turns
+    // had nobody to name, and the bridge now refuses a turn that names nobody,
+    // so the lobby went quiet: the exact phase the host exists for.
+    //
+    // A human at the table is the honest answer. Room member keys for humans
+    // are Firebase uids, which is what the bridge checks membership against.
+    let startedBy = cfg.startedBy;
+    if (!startedBy) {
+      const members = await ctx.db
+        .query('roomMembers')
+        .withIndex('by_room', (q) => q.eq('roomId', roomId))
+        .collect();
+      startedBy = members.find((m) => m.kind === 'human')?.memberKey;
+    }
+
+    return { guildId: cfg.guildId, startedBy };
   },
 });
 
