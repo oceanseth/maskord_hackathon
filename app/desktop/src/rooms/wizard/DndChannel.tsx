@@ -48,8 +48,9 @@ export default function DndChannel({ guildId, channelId }: Props) {
   const channelName = channel?.name ?? '';
   // A voice channel already shows every participant as a tile above the board,
   // with masks, speaking rings and the avatar switcher. A second roster under
-  // it is the same people twice.
-  const showRoster = channel?.type !== 'voice';
+  // it is the same people twice — except for the masks seated at the table,
+  // who play without ever joining the call and so have no tile up there.
+  const isVoice = channel?.type === 'voice';
   const slug = channelRoomSlug(channelId);
   // The guild is known from the first render, so the room carries it from
   // creation rather than from `start`: the bridge that mirrors lines into the
@@ -137,8 +138,8 @@ export default function DndChannel({ guildId, channelId }: Props) {
       <div className="flex-1 flex min-h-0">
         {/* The conversation: channel messages and the transcript, one stream. */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          {showRoster && <MemberStrip
-            members={room.members}
+          {(!isVoice || room.members.some((m) => m.kind === 'mask')) && <MemberStrip
+            members={isVoice ? room.members.filter((m) => m.kind === 'mask') : room.members}
             meKey={room.me?.memberKey}
             extra={(m) =>
               m.kind !== 'host' && Object.values(wiz.seats).some((s) => s?.ownerKey === m.memberKey) ? (
