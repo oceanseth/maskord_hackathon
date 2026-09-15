@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { useAuth, useUserProfiles, createInvite, useGuild, useGuildChannels, DEFAULT_CLAUDE_AVATAR } from '@maskord/shared';
 import type { ShareKind } from '@maskord/shared';
 import { useTalkingHead } from '../../hooks/useTalkingHead';
+import { useAvatarReplyPlayback } from '../../hooks/useAvatarReplyPlayback';
 import { useVoiceCtx } from './VoiceProvider';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
 import Modal from '../ui/Modal';
@@ -130,6 +131,15 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
 
   // The avatarId currently speaking (audio playing), so we pulse the right tile.
   const [speakingAvatarId, setSpeakingAvatarId] = useState<string | null>(null);
+
+  // Avatar audio has to live here, not in ChatPanel: a campaign channel is
+  // compact and hides the chat, but the tiles still need to be heard.
+  const { playingId } = useAvatarReplyPlayback({
+    guildId,
+    channelId,
+    enabled: displayedAvatars.length > 0 || transcriptOn,
+    onAvatarSpeakingChange: setSpeakingAvatarId,
+  });
 
   // Talking-head video playback (when a channel is in "talking head" mode the
   // avatar reply renders a video; we play it inside the speaking avatar's tile).
@@ -288,8 +298,8 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
 
       {/* Chat panel — shown when AI assistance is on for this channel.
           Never in compact: the surface underneath is the channel's one
-          conversation, and a second chat above it shows every spoken line
-          twice while the avatar answers into only one of them. */}
+          conversation. Audio still plays above (useAvatarReplyPlayback);
+          hiding this only hides the duplicate transcript. */}
       {transcriptOn && !compact && (
         <ChatPanel
           guildId={guildId}
@@ -298,7 +308,7 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
           avatarsById={avatarsById}
           textByUtterance={textByUtterance}
           selfMask={selectedMask ? { name: selectedMask.displayName, avatarUrl: selectedMask.thumbnailUrl } : undefined}
-          onAvatarSpeakingChange={setSpeakingAvatarId}
+          playingId={playingId}
         />
       )}
 

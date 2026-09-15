@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "node scripts/gen-skills.mjs && tsc && vite build && node scripts/build-app.mjs",
+    "test:playbook": "node --experimental-strip-types --test scripts/playbook.test.ts",
     "preview": "vite preview",
     "deploy:convex": "npx @convex-dev/static-hosting deploy -d ./dist"
   },

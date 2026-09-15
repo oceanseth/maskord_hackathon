@@ -463,6 +463,8 @@ export function nearest<T extends { pos: Position }>(from: Position, items: T[])
   return best;
 }
 
+export { orderCombatants, type PartyKind } from './playbook';
+
 // ---------------------------------------------------------------------------
 // Seating masks
 

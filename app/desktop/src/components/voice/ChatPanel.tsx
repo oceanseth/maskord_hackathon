@@ -7,8 +7,6 @@ import { formatDistanceToNow } from 'date-fns';
 import MessageInput from '../channel/MessageInput';
 import MessageAttachments from '../channel/MessageAttachments';
 import { uploadAttachment } from '../../lib/convexUploads';
-import { avatarAudioEl } from '../../lib/avatarAudio';
-import { useVoiceCtx } from './VoiceProvider';
 
 interface AvatarInfo { avatarId: string; displayName: string; thumbnailUrl?: string }
 
@@ -25,28 +23,21 @@ interface Props {
   /** The local user's selected mask — typed messages are stamped with it so the
    *  user shows as their mask, not their real name. */
   selfMask?: { name: string; avatarUrl?: string };
-  /** Called with the avatarId currently speaking (or null) so the participant
-   *  grid can pulse the right tile in sync with audio playback. */
-  onAvatarSpeakingChange?: (avatarId: string | null) => void;
-}
-
-/** Reply docs use a bot uid of `bot:<guildId>:<avatarId>`. */
-function avatarIdFromUserId(userId: string): string | null {
-  const parts = userId.split(':');
-  return parts[0] === 'bot' && parts.length >= 3 ? parts[2] : null;
+  /** Utterance currently playing, from the voice surface's shared player. */
+  playingId?: string | null;
 }
 
 /**
  * Chat panel for a voice channel. Members type messages directly; their
  * spoken words get appended automatically (browser STT, source: 'stt')
- * and are flagged with a "transcribed" badge. The AI avatar's replies
- * stream in with source 'agent-reply' and autoplay any attached audio.
+ * and are flagged with a "transcribed" badge. Avatar audio plays on the
+ * voice surface (`useAvatarReplyPlayback`) so a compact campaign channel
+ * still hears them.
  *
  * Backed by `guilds/{gid}/channels/{cid}/transcript`.
  */
-export default function ChatPanel({ guildId, channelId, avatarName, avatarsById, textByUtterance, selfMask, onAvatarSpeakingChange }: Props) {
+export default function ChatPanel({ guildId, channelId, avatarName, avatarsById, textByUtterance, selfMask, playingId }: Props) {
   const { firebaseUser } = useAuth();
-  const { reportAudioBlocked } = useVoiceCtx();
   const { utterances, loading } = useTranscript(guildId, channelId, 80);
 
   const uids = useMemo(
@@ -63,82 +54,9 @@ export default function ChatPanel({ guildId, channelId, avatarName, avatarsById,
     el.scrollTop = el.scrollHeight;
   }, [utterances.length, utterances[utterances.length - 1]?.text]);
 
-  // ── Avatar audio autoplay ──
-  // Each new agent-reply is played once. Long replies are chunked by masky into
-  // multiple audio URLs (`audioUrls`); we play them back-to-back so the whole
-  // reply is heard in order. Falls back to the single `audioUrl`.
-  const playedRef = useRef<Set<string>>(new Set());
-  const seededRef = useRef(false); // history seeded so we don't replay on join
-  const busyRef   = useRef(false); // a reply is currently playing
-  const mountedRef = useRef(true);
-  const [playingId, setPlayingId] = useState<string | null>(null);
   const [uploading, setUploading] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
-  const [recheck, setRecheck] = useState(0); // bumped when a reply finishes
-
-  useEffect(() => () => { mountedRef.current = false; }, []);
-
-  // On join, mark every reply already in the transcript as played so we only
-  // hear NEW turns — not a recap of the whole conversation. Runs before the
-  // autoplay effect (declared first) so nothing historical sneaks through.
-  useEffect(() => {
-    if (seededRef.current || loading) return;
-    for (const u of utterances) {
-      if (u.source === 'agent-reply') playedRef.current.add(u.id);
-    }
-    seededRef.current = true;
-  }, [loading, utterances]);
-
-  useEffect(() => {
-    // One reply at a time — don't interleave with an in-flight playback.
-    if (!seededRef.current || busyRef.current) return;
-    const next = utterances.find(
-      (u) => u.source === 'agent-reply'
-        && u.maskyOutput !== 'video'       // video replies play in the tile, not here
-        && (u.audioUrls?.length || u.audioUrl)
-        && !playedRef.current.has(u.id),
-    );
-    if (!next) return;
-    const urls = next.audioUrls?.length ? next.audioUrls : next.audioUrl ? [next.audioUrl] : [];
-    if (urls.length === 0) return;
-    playedRef.current.add(next.id);
-    busyRef.current = true;
-    const speakingId = avatarIdFromUserId(next.userId);
-
-    // Playback is driven by onended callbacks, NOT this effect's lifecycle, so
-    // it survives transcript updates (which re-run the effect) mid-sentence.
-    const finish = () => {
-      busyRef.current = false;
-      if (!mountedRef.current) return;
-      setPlayingId((cur) => (cur === next.id ? null : cur));
-      onAvatarSpeakingChange?.(null);
-      setRecheck((v) => v + 1); // pick up any reply that queued while we played
-    };
-    const playAt = (i: number) => {
-      if (!mountedRef.current || i >= urls.length) return finish();
-      // One element reused for every chunk, unlocked by the first user gesture.
-      // A fresh `new Audio()` per chunk is blocked outright on mobile: iOS only
-      // permits playback on elements a gesture has already started, so each new
-      // element was silently skipped and the avatar appeared mute.
-      const el = avatarAudioEl();
-      el.onended = () => playAt(i + 1);
-      el.onerror = () => playAt(i + 1); // skip a failed chunk, keep the rest
-      el.src = urls[i];
-      el.play().catch((err) => {
-        console.warn('[chat] avatar audio blocked:', err);
-        // Surface it instead of swallowing it — the same banner that unlocks
-        // remote peer audio also unlocks this.
-        reportAudioBlocked();
-        playAt(i + 1);
-      });
-    };
-
-    setPlayingId(next.id);
-    onAvatarSpeakingChange?.(speakingId);
-    playAt(0);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [utterances, recheck]);
 
   // ── Send typed message ──
   async function handleSend(text: string) {
