@@ -12,7 +12,7 @@ const db = admin.firestore();
 export {
   onClaudeChannelMessage, onClaudeTranscriptUtterance,
   onChannelAiDisabled, onGuildAiDisabled, agentSpeak,
-  inviteAvatarToVoice,
+  inviteAvatarToVoice, dismissAvatarFromVoice,
 } from './claudeAgent';
 // ─── Inference bridge for the Convex game rooms ───────────────────────────────
 export { roomTurn } from './roomTurn';

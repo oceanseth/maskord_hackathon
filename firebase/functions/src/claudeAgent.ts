@@ -575,19 +575,26 @@ async function inviteAvatar(
   requesterUid: string | undefined,
   presence: VoicePresence[],
   name: string,
+  channelIdHint?: string,
 ): Promise<{ content: Anthropic.TextBlockParam[]; isError: boolean }> {
   const say = (text: string, isError = true) => ({ content: [{ type: 'text' as const, text }], isError });
 
   if (!guildId || !requesterUid) return say('There is no channel to invite anyone into.');
   if (!name.trim()) return say('No avatar name was given.');
 
-  // Whichever voice channel the requester is sitting in.
-  const channelId = presence.find((p) => p.userId === requesterUid)?.channelId;
+  // A campaign board knows which channel it is; spoken invites still use presence.
+  let channelId = channelIdHint?.trim() || presence.find((p) => p.userId === requesterUid)?.channelId;
   if (!channelId) {
     return say(
       'They are not in a voice channel right now, so there is nowhere to bring an avatar. '
       + 'Tell them to join one first.',
     );
+  }
+  if (channelIdHint) {
+    const snap = await db.doc(`guilds/${guildId}/channels/${channelId}`).get();
+    if (!snap.exists || snap.data()?.type !== 'voice') {
+      return say('That channel is not a voice channel, so there is nowhere to bring an avatar.');
+    }
   }
 
   const key = await ensureUserMaskyKey(requesterUid);
@@ -636,14 +643,46 @@ async function inviteAvatar(
  */
 export const inviteAvatarToVoice = onCall(async (request) => {
   if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
-  const { guildId, name } = request.data as { guildId?: string; name?: string };
+  const { guildId, name, channelId } = request.data as {
+    guildId?: string; name?: string; channelId?: string;
+  };
   if (!guildId || !name) throw new HttpsError('invalid-argument', 'guildId and name required');
 
   const presence = await loadVoicePresence(guildId);
-  const result = await inviteAvatar(guildId, request.auth.uid, presence, name);
+  const result = await inviteAvatar(guildId, request.auth.uid, presence, name, channelId);
   const message = result.content.map((c) => ('text' in c ? c.text : '')).join(' ').trim();
   if (result.isError) throw new HttpsError('failed-precondition', message);
   return { ok: true, message };
+});
+
+/**
+ * The inverse of inviteAvatarToVoice: drop a non-primary avatar the caller
+ * invited. Seating a mask at the table uses the invite path; unseating it
+ * should leave the call the same way.
+ */
+export const dismissAvatarFromVoice = onCall(async (request) => {
+  if (!request.auth) throw new HttpsError('unauthenticated', 'Must be signed in');
+  const { guildId, name, channelId: channelIdHint } = request.data as {
+    guildId?: string; name?: string; channelId?: string;
+  };
+  if (!guildId || !name) throw new HttpsError('invalid-argument', 'guildId and name required');
+
+  const presence = await loadVoicePresence(guildId);
+  const channelId = channelIdHint?.trim()
+    || presence.find((p) => p.userId === request.auth!.uid)?.channelId;
+  if (!channelId) throw new HttpsError('failed-precondition', 'Not in a voice channel');
+
+  const active = await loadActiveAvatars(guildId, channelId);
+  const found = active.find((a) => a.displayName.toLowerCase() === name.trim().toLowerCase());
+  if (!found) return { ok: true, message: `${name} was not in the channel.` };
+  if (found.isPrimary) {
+    throw new HttpsError('failed-precondition', 'The channel\'s primary avatar stays.');
+  }
+  if (found.invitedBy && found.invitedBy !== request.auth.uid) {
+    throw new HttpsError('permission-denied', 'Only the person who brought them can send them out.');
+  }
+  await removeActiveAvatar(guildId, channelId, found.avatarId);
+  return { ok: true, message: `${found.displayName} left the voice channel.` };
 });
 
 const READ_ATTACHMENT_TOOL: Anthropic.Tool = {
@@ -1169,6 +1208,56 @@ async function respondAsAvatar(opts: {
   } catch (err) {
     console.error('[masky] voice turn failed:', err);
     await destRef.update({ text: '_(error generating response)_', streaming: false }).catch(() => {});
+  }
+}
+
+/**
+ * Speak a table line through the matching live avatar, if this channel has one.
+ *
+ * Mask turns and DM lines land in the channel as bot messages; voice tiles only
+ * play audio that went through a masky conversation. Matching `mask:<avatarId>`
+ * or the host to the primary keeps one roster: the seated avatar is the one
+ * you hear.
+ */
+export async function voiceTableLine(opts: {
+  guildId: string;
+  channelId: string;
+  speakerKey: string;
+  speakerName: string;
+  content: string;
+}): Promise<{ voiced: boolean }> {
+  const text = opts.content.trim();
+  if (!text) return { voiced: false };
+
+  const active = await loadActiveAvatars(opts.guildId, opts.channelId);
+  if (active.length === 0) return { voiced: false };
+
+  const key = opts.speakerKey;
+  const name = opts.speakerName.trim().toLowerCase();
+  const maskId = key.startsWith('mask:') ? key.slice('mask:'.length) : '';
+  const avatar =
+    (maskId && active.find((a) => a.avatarId === maskId))
+    || (key === 'host' ? active.find((a) => a.isPrimary) ?? active[0] : undefined)
+    || active.find((a) => a.displayName.toLowerCase() === name);
+  if (!avatar?.conversationId) return { voiced: false };
+
+  const guild = await loadGuildCfg(opts.guildId);
+  const apiKey = await keyForAvatar(avatar, guild?.maskyApiKey ?? '');
+  if (!apiKey) return { voiced: false };
+
+  try {
+    await respondAsAvatar({
+      guildId: opts.guildId,
+      channelId: opts.channelId,
+      apiKey,
+      avatar,
+      userText: text,
+      mode: 'speak',
+    });
+    return { voiced: true };
+  } catch (err) {
+    console.warn('[roomMessage] voiceTableLine failed', err);
+    return { voiced: false };
   }
 }
 

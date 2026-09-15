@@ -225,8 +225,10 @@ export function feet(a: Position, b: Position): number {
 // Channel phases
 //
 // A D&D channel walks `ruleset -> characters -> play -> resolve` and the host is
-// prompted with a different skillfile in each (see ../skills/dndcampaign). `Phase` above
-// is the engine's sub-state inside `play` and never surfaces as a channel phase.
+// prompted with a different skillfile in each (see ../skills/dndcampaign). Inside
+// `play`, `skills/dndcampaign/playbook.md` lists scenes; combat scenes wait for
+// the table to fight. `Phase` below is the engine's sub-state and never
+// surfaces as a channel phase.
 
 export type DndPhase = 'ruleset' | 'characters' | 'play' | 'resolve';
 export const DND_PHASES: DndPhase[] = ['ruleset', 'characters', 'play', 'resolve'];

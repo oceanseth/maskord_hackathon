@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
+import { voiceTableLine } from './claudeAgent';
 
 /**
  * Lets a Convex game room post into the channel it is bound to.
@@ -43,7 +44,7 @@ function maskUid(guildId: string, speakerKey: string): string {
 }
 
 export const roomMessage = onRequest(
-  { cors: false, secrets: [bridgeSecret, bridgeGuilds], timeoutSeconds: 60 },
+  { cors: false, secrets: [bridgeSecret, bridgeGuilds], timeoutSeconds: 120 },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.status(405).json({ error: 'POST only' });
@@ -128,6 +129,13 @@ export const roomMessage = onRequest(
       messageCount: admin.firestore.FieldValue.increment(1),
       lastMessageAt: admin.firestore.FieldValue.serverTimestamp(),
     });
+
+    const chanType = channel.data()?.type as string | undefined;
+    if (chanType === 'voice') {
+      await voiceTableLine({
+        guildId, channelId, speakerKey, speakerName, content: content.trim(),
+      }).catch((err) => console.warn('[roomMessage] voice failed', err));
+    }
 
     res.json({ ok: true, authorId: uid });
   },

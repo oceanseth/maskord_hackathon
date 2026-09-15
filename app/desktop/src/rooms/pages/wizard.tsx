@@ -26,7 +26,7 @@ function WizardRoom({ identity }: { identity: RoomIdentity }) {
         {wiz.phase !== 'lobby' && status === 'running' && <button className="px-2 py-0.5 rounded bg-[#2a2a3e] hover:bg-[#3a3a5e]" onClick={() => wiz.pause('looking at a character sheet')}>Pause</button>}
         {status === 'paused' && <button className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600" onClick={() => wiz.resume()}>Resume</button>}
       </div>
-      {wiz.phase === 'lobby' ? <Lobby room={room} wiz={{ ...wiz, start: () => wiz.start(activeGuildId ?? undefined) }} uid={identity.key} /> : <GamePanel room={room} wiz={wiz} />}
+      {wiz.phase === 'lobby' ? <Lobby room={room} wiz={{ ...wiz, start: () => wiz.start(activeGuildId ?? undefined) }} uid={identity.key} guildId={activeGuildId ?? undefined} /> : <GamePanel room={room} wiz={wiz} />}
     </>
   );
 

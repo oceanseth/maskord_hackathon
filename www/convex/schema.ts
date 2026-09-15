@@ -183,6 +183,8 @@ export default defineSchema({
     turn: v.any(),
     fires: v.any(),
     xp: v.number(),
+    /** Playbook scene id (`voyage`, `look`, …). Optional on games started before playbooks. */
+    scene: v.optional(v.string()),
   }).index('by_room', ['roomId']),
 
   // A masky.ai avatar its owner has put up for rent. Deliberately a *copy* of

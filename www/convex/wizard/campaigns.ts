@@ -23,8 +23,9 @@ export const CAMPAIGNS: Record<string, Campaign> = {
     ruleset: 'D&D 5e (2014)',
     title: 'Dragons of Stormwreck Isle',
     blurb:
-      'The 2022 Starter Set adventure. Five level-1 heroes are rowed ashore on a small volcanic island off the Sword Coast, ' +
-      'bound for the cliff-top cloister of Dragon’s Rest, and the drowned crew of an old wreck would rather they never reached the stairs. ' +
+      'The 2022 Starter Set adventure. Five level-1 heroes take ship for a volcanic island off the Sword Coast, ' +
+      'bound for the cliff-top cloister of Dragon’s Rest — and the captain will not enter the wreck-strewn harbor, so they are rowed to the north dock. ' +
+      'The drowned crew of an old wreck would rather they never reached the stairs. ' +
       'One to five players on the five official pregenerated sheets; open seats can be filled by masks.',
     secrets: [
       'Elder Runara, the old woman who leads the cloister, is an adult bronze dragon in human form.',
