@@ -94,19 +94,45 @@ export const roomMessage = onRequest(
       return;
     }
 
-    const uid = maskUid(guildId, speakerKey);
-    // The profile doc is what makes the line render as the mask rather than as a
-    // raw id; merge so a renamed mask updates rather than duplicating.
-    await db.doc(`users/${uid}`).set(
-      {
-        displayName: speakerName,
-        avatarUrl: speakerAvatarUrl ?? '',
-        isBot: true,
-        guildId,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      },
-      { merge: true },
-    );
+    // A Twitch chatter is not a mask: `twitch:<userId>` is the uid shape the
+    // Twitch OAuth flow mints, so writing under it means the account the bridge
+    // creates today is the account that person signs into tomorrow.
+    const isTwitchSpeaker = /^twitch:\d{1,20}$/.test(speakerKey);
+    const uid = isTwitchSpeaker ? speakerKey : maskUid(guildId, speakerKey);
+
+    if (isTwitchSpeaker) {
+      // Create-if-missing, never merge: if this uid already belongs to someone
+      // who signed in with Twitch, their profile is theirs and chat relay has
+      // no business rewriting it.
+      const ref = db.doc(`users/${uid}`);
+      const existing = await ref.get();
+      if (!existing.exists) {
+        await ref.set({
+          displayName: speakerName,
+          avatarUrl: speakerAvatarUrl ?? '',
+          // Most display names are the login with different casing; when they
+          // are not, the OAuth flow will set the real value on first sign-in.
+          ...(/^[a-z0-9_]{1,25}$/i.test(speakerName)
+            ? { twitchUsername: speakerName.toLowerCase() }
+            : {}),
+          createdVia: 'twitch-ingest',
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+    } else {
+      // The profile doc is what makes the line render as the mask rather than as a
+      // raw id; merge so a renamed mask updates rather than duplicating.
+      await db.doc(`users/${uid}`).set(
+        {
+          displayName: speakerName,
+          avatarUrl: speakerAvatarUrl ?? '',
+          isBot: true,
+          guildId,
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+    }
 
     await db.collection(`guilds/${guildId}/channels/${channelId}/messages`).add({
       content: content.slice(0, MAX_CONTENT),

@@ -4,7 +4,7 @@ import { api } from '@maskord/convex';
 import type { Doc, Id } from '../../../../www/convex/_generated/dataModel';
 import { getRunnerId } from './convex';
 
-export type RoomKind = 'debate' | 'wizard';
+export type RoomKind = 'debate' | 'wizard' | 'guillotine' | 'marrymatemurder';
 export type RoomStatus = Doc<'rooms'>['status'];
 export type RoomEvent = Doc<'roomEvents'>;
 export type RoomEventType = RoomEvent['type'];

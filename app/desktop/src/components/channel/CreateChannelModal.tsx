@@ -6,12 +6,26 @@ import { CAMPAIGNS, DEFAULT_CAMPAIGN, campaignLabel } from '../../../../../www/c
 type ChannelKind = 'text' | 'voice' | 'category';
 
 /** Modes a channel can be created in. `debate` follows once it moves in-channel. */
-const MODES: { value: ChannelMode; label: string; desc: string }[] = [
+const MODES: { value: ChannelMode; label: string; desc: string; voiceOnly?: boolean }[] = [
   { value: 'default', label: 'Default', desc: 'An ordinary text channel.' },
   {
     value: 'debate',
     label: 'Debate floor',
     desc: 'Masks argue a motion, the room fact-checks them, and the host scores it.',
+  },
+  {
+    // The stage games are voice rooms by construction: the stage talks, the
+    // room talks back, and a text channel has neither half.
+    value: 'guillotine',
+    label: 'Guillotine',
+    desc: 'Billionaires defend themselves on stage; the room and Twitch vote who gets the blade.',
+    voiceOnly: true,
+  },
+  {
+    value: 'marrymatemurder',
+    label: 'Marry · Mate · Murder',
+    desc: 'Three masks on stage make their case; the audience sorts them into marry, mate, murder.',
+    voiceOnly: true,
   },
   {
     value: 'dndcampaign',
@@ -107,7 +121,15 @@ export default function CreateChannelModal({ defaultType = 'text', categoryId = 
                 name="type"
                 value={k.value}
                 checked={type === k.value}
-                onChange={() => setType(k.value)}
+                onChange={() => {
+                  setType(k.value);
+                  // A voice-only mode cannot survive the channel becoming a
+                  // text one; silently keeping it would create a text channel
+                  // in a mode the picker no longer shows.
+                  if (k.value !== 'voice' && MODES.find((m) => m.value === mode)?.voiceOnly) {
+                    setMode('default');
+                  }
+                }}
                 className="sr-only"
               />
               <div className="w-8 h-8 rounded-full bg-[#1e1e2e] flex items-center justify-center text-[#94a3b8] flex-shrink-0">
@@ -162,7 +184,7 @@ export default function CreateChannelModal({ defaultType = 'text', categoryId = 
               onChange={(e) => setMode(e.target.value as ChannelMode)}
               className="w-full px-3 py-2.5 rounded-lg bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none transition-colors"
             >
-              {MODES.map((m) => (
+              {MODES.filter((m) => type === 'voice' || !m.voiceOnly).map((m) => (
                 <option key={m.value} value={m.value}>
                   {m.label}
                 </option>

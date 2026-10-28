@@ -5,7 +5,7 @@ import {
   DEFAULT_CLAUDE_AVATAR,
 } from '@maskord/shared';
 import type { Channel, ChannelMode } from '@maskord/shared';
-import { normalizeChannelMode } from '@maskord/shared';
+import { normalizeChannelMode, STAGE_MODES } from '@maskord/shared';
 import Modal from '../ui/Modal';
 import { useMaskyAvatars } from '../../hooks/useMaskyAvatars';
 
@@ -54,6 +54,8 @@ function TabBtn({ label, active, onClick }: { label: string; active: boolean; on
 function OverviewTab({ guildId, channel }: { guildId: string; channel: Channel }) {
   const [saving, setSaving] = useState(false);
   const mode: ChannelMode = channel.mode ?? 'default';
+  const isVoice = channel.type === 'voice';
+  const isStageMode = STAGE_MODES.includes(mode);
 
   async function setMode(next: ChannelMode) {
     if (next === mode) return;
@@ -86,6 +88,9 @@ function OverviewTab({ guildId, channel }: { guildId: string; channel: Channel }
             <option value="default">Default</option>
             <option value="debate">Debate floor</option>
             <option value="dndcampaign">D&amp;D table</option>
+            {/* The stage games need a room that talks: voice channels only. */}
+            {isVoice && <option value="guillotine">Guillotine</option>}
+            {isVoice && <option value="marrymatemurder">Marry · Mate · Murder</option>}
           </select>
           <p className="text-xs text-[#6b7280]">
             The messages stay exactly where they are — only the view over them changes, so
@@ -93,6 +98,79 @@ function OverviewTab({ guildId, channel }: { guildId: string; channel: Channel }
           </p>
         </div>
       )}
+
+      {isVoice && isStageMode && <TwitchIngestSection guildId={guildId} channel={channel} />}
+    </div>
+  );
+}
+
+/**
+ * The Twitch half of a stage game: name a Twitch channel and tick the box, and
+ * its chat flows into the room — messages shown under the Twitch user's name,
+ * and !execute / !marry / !mate / !murder counted as stage votes.
+ *
+ * Only the two fields live here; the bridge itself is a Convex ingest loop that
+ * `ChannelGameView` keeps in sync with these values while the board is open.
+ */
+function TwitchIngestSection({ guildId, channel }: { guildId: string; channel: Channel }) {
+  const [twitchChannel, setTwitchChannel] = useState(channel.twitchChannel ?? '');
+  const [ingest, setIngest] = useState(channel.twitchIngest ?? false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setTwitchChannel(channel.twitchChannel ?? '');
+    setIngest(channel.twitchIngest ?? false);
+  }, [channel.id, channel.twitchChannel, channel.twitchIngest]);
+
+  async function save(next: { twitchChannel?: string; twitchIngest?: boolean }) {
+    setSaving(true);
+    try {
+      await updateChannel(guildId, channel.id, next);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const normalized = twitchChannel.trim().toLowerCase().replace(/^#/, '');
+
+  return (
+    <div className="space-y-1.5 pt-2 border-t border-[#1e1e2e]">
+      <label className="block text-xs font-semibold text-[#94a3b8] uppercase tracking-wide">
+        Twitch
+      </label>
+      <input
+        type="text"
+        value={twitchChannel}
+        disabled={saving}
+        placeholder="twitch channel to ingest, e.g. simplystrong"
+        onChange={(e) => setTwitchChannel(e.target.value)}
+        onBlur={() => {
+          if (normalized !== (channel.twitchChannel ?? '')) {
+            void save({ twitchChannel: normalized });
+          }
+        }}
+        className="w-full px-3 py-2 rounded-lg bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none disabled:opacity-50"
+      />
+      <label className="flex items-center gap-2 text-sm text-[#c8d0e0] cursor-pointer select-none">
+        <input
+          type="checkbox"
+          checked={ingest}
+          disabled={saving || !normalized}
+          onChange={(e) => {
+            setIngest(e.target.checked);
+            void save({ twitchIngest: e.target.checked, twitchChannel: normalized });
+          }}
+          className="accent-violet-600"
+        />
+        Ingest Twitch Chat
+      </label>
+      <p className="text-xs text-[#6b7280]">
+        Messages from that Twitch chat appear in this room as the Twitch user, and
+        <code className="text-violet-300"> !execute A</code>,
+        <code className="text-violet-300"> !marry B</code>,
+        <code className="text-violet-300"> !mate A</code> and
+        <code className="text-violet-300"> !murder C</code> count as votes on the stage.
+      </p>
     </div>
   );
 }

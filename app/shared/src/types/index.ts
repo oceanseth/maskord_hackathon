@@ -119,7 +119,14 @@ export interface ChannelAvatar {
  * the view over it differs. Making D&D a `ChannelType` would fork all of that.
  * Absent means `'default'`; every channel that existed before this is one.
  */
-export type ChannelMode = 'default' | 'dndcampaign' | 'debate';
+export type ChannelMode = 'default' | 'dndcampaign' | 'debate' | 'guillotine' | 'marrymatemurder';
+
+/**
+ * Modes whose board is a stage of masks an audience votes on. They only make
+ * sense in a voice channel — the stage talks, and the room talks back — so the
+ * create/settings UIs offer them for voice channels alone.
+ */
+export const STAGE_MODES: readonly ChannelMode[] = ['guillotine', 'marrymatemurder'];
 
 /**
  * `dnd` was the original value and reads as "do not disturb" to anyone who has
@@ -163,6 +170,12 @@ export interface Channel {
   maskyLiveUrl?: string;
   /** Opaque viewer token gating the conversation's live media. */
   maskyViewerToken?: string;
+  /** Twitch channel (login name) whose chat is bridged into this channel's
+   *  stage game. Only meaningful for voice channels in a stage mode. */
+  twitchChannel?: string;
+  /** Whether the Twitch bridge is on. Off by default; the checkbox in channel
+   *  settings flips it. */
+  twitchIngest?: boolean;
   /** AI avatars currently present in this voice channel (server-managed). The
    *  primary avatar is always present; others join via voice invite. */
   activeAvatars?: ChannelAvatar[];

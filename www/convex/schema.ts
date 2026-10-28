@@ -52,7 +52,12 @@ export default defineSchema({
   rooms: defineTable({
     /** URL key: /wizard.html?room=<slug>. */
     slug: v.string(),
-    kind: v.union(v.literal('debate'), v.literal('wizard')),
+    kind: v.union(
+      v.literal('debate'),
+      v.literal('wizard'),
+      v.literal('guillotine'),
+      v.literal('marrymatemurder'),
+    ),
     title: v.string(),
     status: v.union(
       v.literal('lobby'),

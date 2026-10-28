@@ -16,7 +16,12 @@ import type { MutationCtx, QueryCtx } from './_generated/server';
  * back at the room, not here.
  */
 
-export const roomKind = v.union(v.literal('debate'), v.literal('wizard'));
+export const roomKind = v.union(
+  v.literal('debate'),
+  v.literal('wizard'),
+  v.literal('guillotine'),
+  v.literal('marrymatemurder'),
+);
 export const roomStatus = v.union(
   v.literal('lobby'),
   v.literal('running'),
@@ -68,7 +73,7 @@ async function nextSeq(ctx: MutationCtx, roomId: Id<'rooms'>) {
  * `/wizard.html?room=friday` have no channel and mirror nowhere.
  */
 function boundChannelId(slug: string): string | null {
-  const match = /^(?:wizard|debate):ch-(.+)$/.exec(slug);
+  const match = /^(?:wizard|debate|guillotine|marrymatemurder):ch-(.+)$/.exec(slug);
   return match ? match[1] : null;
 }
 
@@ -223,47 +228,65 @@ export const ensure = mutation({
     hostName: v.optional(v.string()),
     config: v.optional(v.any()),
   },
-  handler: async (ctx, { slug, kind, title, hostName, config }) => {
-    // The slug namespace is `<kind>:<name>` (see roomSlugFromLocation on the
-    // client), so ?room=friday is a different room on each page. Enforce it
-    // here rather than trusting callers: a wizard room named "debate:x" would
-    // otherwise be opened by the debate page as its own.
-    if (!slug.startsWith(`${kind}:`)) {
-      throw new Error(`room slug "${slug}" must start with "${kind}:"`);
-    }
-    const existing = await getRoomBySlug(ctx, slug);
-    if (existing) return existing._id;
-
-    const roomId = await ctx.db.insert('rooms', {
-      slug: slug.trim().slice(0, MAX_NAME),
-      kind,
-      title: title.trim().slice(0, 120),
-      status: 'lobby',
-      hostName: (hostName ?? 'Masky').slice(0, MAX_NAME),
-      config: config ?? {},
-      turn: { seq: 0 },
-    });
-
-    await ctx.db.insert('roomMembers', {
-      roomId,
-      memberKey: 'host',
-      kind: 'host',
-      name: (hostName ?? 'Masky').slice(0, MAX_NAME),
-      ready: true,
-      lastSeen: Date.now(),
-      state: {},
-    });
-
-    await appendEvent(ctx, roomId, {
-      type: 'system',
-      actorName: 'room',
-      body: `Room "${title}" opened.`,
-      data: { kind: 'opened' },
-    });
-
-    return roomId;
-  },
+  handler: async (ctx, args) => await ensureRoom(ctx, args),
 });
+
+/** Shared by `ensure` and the modules that open a room server-side (the Twitch bridge). */
+export async function ensureRoom(
+  ctx: MutationCtx,
+  {
+    slug,
+    kind,
+    title,
+    hostName,
+    config,
+  }: {
+    slug: string;
+    kind: Doc<'rooms'>['kind'];
+    title: string;
+    hostName?: string;
+    config?: unknown;
+  },
+): Promise<Id<'rooms'>> {
+  // The slug namespace is `<kind>:<name>` (see roomSlugFromLocation on the
+  // client), so ?room=friday is a different room on each page. Enforce it
+  // here rather than trusting callers: a wizard room named "debate:x" would
+  // otherwise be opened by the debate page as its own.
+  if (!slug.startsWith(`${kind}:`)) {
+    throw new Error(`room slug "${slug}" must start with "${kind}:"`);
+  }
+  const existing = await getRoomBySlug(ctx, slug);
+  if (existing) return existing._id;
+
+  const roomId = await ctx.db.insert('rooms', {
+    slug: slug.trim().slice(0, MAX_NAME),
+    kind,
+    title: title.trim().slice(0, 120),
+    status: 'lobby',
+    hostName: (hostName ?? 'Masky').slice(0, MAX_NAME),
+    config: config ?? {},
+    turn: { seq: 0 },
+  });
+
+  await ctx.db.insert('roomMembers', {
+    roomId,
+    memberKey: 'host',
+    kind: 'host',
+    name: (hostName ?? 'Masky').slice(0, MAX_NAME),
+    ready: true,
+    lastSeen: Date.now(),
+    state: {},
+  });
+
+  await appendEvent(ctx, roomId, {
+    type: 'system',
+    actorName: 'room',
+    body: `Room "${title}" opened.`,
+    data: { kind: 'opened' },
+  });
+
+  return roomId;
+}
 
 export const setStatus = mutation({
   args: {
