@@ -211,4 +211,30 @@ export default defineSchema({
   })
     .index('by_owner', ['ownerUid'])
     .index('by_avatar', ['ownerUid', 'avatarId']),
+
+  // The shared stage (convex/stage.ts) that guillotine and marry/mate/murder
+  // play on. One row per voter per round per verb. `voterKey` is not a room
+  // member key on purpose: a Twitch viewer votes as `twitch:<login>` without
+  // ever joining the room, and lands in the same tally and the same ledger.
+  stageVotes: defineTable({
+    roomId: v.id('rooms'),
+    round: v.number(),
+    voterKey: v.string(),
+    voterName: v.string(),
+    verb: v.string(),
+    label: v.string(),
+  })
+    .index('by_room_round', ['roomId', 'round'])
+    .index('by_room_round_voter', ['roomId', 'round', 'voterKey']),
+
+  // Points for voting with the majority, accumulated across rounds.
+  stagePoints: defineTable({
+    roomId: v.id('rooms'),
+    voterKey: v.string(),
+    voterName: v.string(),
+    points: v.number(),
+    rounds: v.number(),
+  })
+    .index('by_room', ['roomId'])
+    .index('by_room_voter', ['roomId', 'voterKey']),
 });

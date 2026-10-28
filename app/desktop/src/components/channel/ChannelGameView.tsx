@@ -8,6 +8,7 @@ import type { ChannelMode } from '@maskord/shared';
 import type { RoomIdentity } from '../../rooms/useRoom';
 import DebateChannel from '../../rooms/debate/DebateChannel';
 import DndChannel from '../../rooms/wizard/DndChannel';
+import GuillotineChannel from '../../rooms/guillotine/GuillotineChannel';
 
 /**
  * What a game board is handed when a channel is in one of the game modes.
@@ -67,9 +68,10 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
       <DndChannel guildId={guildId} channelId={channelId} />
     ) : mode === 'debate' ? (
       <DebateChannel guildId={guildId} channelId={channelId} />
-    ) : mode === 'guillotine' || mode === 'marrymatemurder' ? (
-      // The stage boards mount here: rooms/guillotine/ (guillotine) and
-      // rooms/marrymatemurder/ replace this placeholder with their component,
+    ) : mode === 'guillotine' ? (
+      <GuillotineChannel guildId={guildId} channelId={channelId} />
+    ) : mode === 'marrymatemurder' ? (
+      // rooms/marrymatemurder/ replaces this placeholder with its board,
       // keeping the TwitchIngestSync mount below intact.
       <StagePending mode={mode} />
     ) : null;
