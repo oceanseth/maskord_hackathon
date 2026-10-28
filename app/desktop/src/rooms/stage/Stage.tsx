@@ -167,7 +167,9 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
   const audible = useStageVoice(data, muted);
   const stage = data?.stage;
   const phase = stage?.phase ?? 'idle';
-  const now = useNow(Boolean(stage && (phase === 'speeches' || phase === 'voting' || stage.line)));
+  // Tick only while something on screen is timed: a round in progress, or a line still playing.
+  const lineLive = Boolean(stage?.line && Date.now() < stage.line.startedAt + stage.line.durationMs);
+  const now = useNow(phase === 'speeches' || phase === 'voting' || lineLive);
   const [error, setError] = useState<string | null>(null);
 
   const toggleMute = () => {

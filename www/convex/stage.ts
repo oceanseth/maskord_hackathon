@@ -466,16 +466,7 @@ export const closeVoting = internalMutation({
 
     const votes = await votesFor(ctx, roomId, stage.round);
     const tallies = tally(stage, votes);
-    const majority: Record<string, string> = {};
-    const byChance: string[] = [];
-    for (const verb of stage.verbs) {
-      const counts = stage.entrants.map((e) => ({ label: e.label, n: tallies[e.label]?.[verb] ?? 0 }));
-      const top = Math.max(0, ...counts.map((c) => c.n));
-      const leaders = counts.filter((c) => c.n === top);
-      if (leaders.length === 0) continue;
-      if (leaders.length > 1 || top === 0) byChance.push(verb);
-      majority[verb] = leaders[Math.floor(Math.random() * leaders.length)].label;
-    }
+    const { majority, byChance } = pickMajority(stage, tallies);
 
     // A point per verb a voter put on the audience's pick. A coin toss is
     // nobody's majority, so it scores nothing.
@@ -532,6 +523,63 @@ export const closeVoting = internalMutation({
     }
   },
 });
+
+/**
+ * The audience's pick per verb. Ties and silence are broken at random and
+ * flagged as chance. In an exclusive stage the picks are assigned greedily —
+ * strongest (verb, entrant) pair first, each verb and each entrant used once —
+ * so nobody is both married and murdered.
+ */
+function pickMajority(stage: StageState, tallies: Record<string, Record<string, number>>) {
+  const majority: Record<string, string> = {};
+  const byChance: string[] = [];
+  const usedLabels = new Set<string>();
+  // Shuffle first so equal counts are ordered at random, then stable-sort by count.
+  const pairs = stage.verbs
+    .flatMap((verb) => stage.entrants.map((e) => ({ verb, label: e.label, n: tallies[e.label]?.[verb] ?? 0, r: Math.random() })))
+    .sort((a, b) => b.n - a.n || a.r - b.r);
+  const verbsLeft = new Set(stage.verbs);
+  for (const p of pairs) {
+    if (!verbsLeft.has(p.verb)) continue;
+    if (stage.exclusive && usedLabels.has(p.label)) continue;
+    // Chance if this pick has no votes, or another still-available entrant tied it.
+    const rivals = pairs.filter(
+      (q) => q.verb === p.verb && q.label !== p.label && q.n === p.n && !(stage.exclusive && usedLabels.has(q.label)),
+    );
+    if (p.n === 0 || rivals.length > 0) byChance.push(p.verb);
+    majority[p.verb] = p.label;
+    verbsLeft.delete(p.verb);
+    usedLabels.add(p.label);
+  }
+  return { majority, byChance };
+}
+
+/**
+ * Pick a round back up after a pause. Scheduled transitions that landed during
+ * the pause did nothing, so re-fire whatever is pending now; a vote that was
+ * interrupted gets back the time it had left (at least ten seconds).
+ */
+export async function resumeStage(ctx: MutationCtx, roomId: Id<'rooms'>, pausedAt?: number) {
+  const room = await ctx.db.get(roomId);
+  if (!room) return;
+  const stage = stageOf(room);
+  if (!stage.pending) return;
+  const step = stage.step + 1;
+  const now = Date.now();
+  if (stage.pending.kind === 'closeVoting') {
+    const left = stage.votingEndsAt ? stage.votingEndsAt - (pausedAt ?? now) : stage.voteMs;
+    const endsAt = now + Math.max(10_000, left);
+    await writeStage(ctx, roomId, { ...stage, step, votingEndsAt: endsAt, deadline: endsAt });
+    await ctx.scheduler.runAfter(endsAt - now, internal.stage.closeVoting, { roomId, step });
+    return;
+  }
+  await writeStage(ctx, roomId, { ...stage, step, deadline: now + SPEAK_DEADLINE_MS });
+  if (stage.pending.kind === 'speak') {
+    await ctx.scheduler.runAfter(0, internal.stage.speak, { roomId, step, index: stage.pending.index });
+  } else {
+    await ctx.scheduler.runAfter(0, internal.stage.openVoting, { roomId, step });
+  }
+}
 
 /**
  * The watchdog. Every open board calls this every few seconds; it does nothing
@@ -619,7 +667,7 @@ export async function recordVote(
   const room = await getRoomBySlug(ctx, args.slug);
   if (!room) return { accepted: false, reason: 'no-room' };
   const stage = stageOf(room);
-  if (stage.phase !== 'voting') return { accepted: false, reason: 'not-voting' };
+  if (room.status !== 'running' || stage.phase !== 'voting') return { accepted: false, reason: 'not-voting' };
   const label = args.label.trim().toUpperCase();
   const verb = args.verb.trim().toLowerCase();
   if (!stage.entrants.some((e) => e.label === label)) return { accepted: false, reason: 'bad-label' };

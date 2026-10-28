@@ -121,6 +121,11 @@ export default function GuillotineChannel({ guildId, channelId }: Props) {
 
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          {game?.champion && (
+            <div className="px-4 py-2 text-center text-sm font-semibold bg-amber-900/30 border-b border-amber-700/40 text-amber-200">
+              👑 {game.champion} survived the blade and wins Guillotine!
+            </div>
+          )}
           <Stage
             data={stage.data}
             vote={stage.vote}

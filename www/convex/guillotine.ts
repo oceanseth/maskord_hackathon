@@ -4,7 +4,16 @@ import type { MutationCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent, getRoomBySlug, joinMember, setPhase } from './rooms';
-import { closeStage, hostSay, openRound, resetStage, stageOf, type StageEntrant, type StageReveal } from './stage';
+import {
+  closeStage,
+  hostSay,
+  openRound,
+  resetStage,
+  resumeStage,
+  stageOf,
+  type StageEntrant,
+  type StageReveal,
+} from './stage';
 
 /**
  * Guillotine: billionaires on the stage, an audience with an Execute button.
@@ -298,7 +307,8 @@ export const start = mutation({
     const fresh = await ctx.db.get(room._id);
     await ctx.db.patch(room._id, {
       status: 'running',
-      config: { ...(fresh?.config ?? {}), ...(startedBy ? { startedBy } : {}) },
+      // Always overwrite: a new game must not bill the previous game's starter.
+      config: { ...(fresh?.config ?? {}), startedBy },
     });
     await setPhase(ctx, room._id, 'playing', { byName: room.hostName });
     await appendEvent(ctx, room._id, {
@@ -405,10 +415,20 @@ export const resume = mutation({
     if (!room) return;
     const game = gameOf(room);
     if (!game || game.champion) return;
-    await ctx.db.patch(room._id, { status: 'running' });
+    if (room.status === 'running') return;
+    const pausedAt = room.pause?.at;
+    await ctx.db.patch(room._id, { status: 'running', pause: undefined });
+    await appendEvent(ctx, room._id, {
+      type: 'system',
+      actorName: 'stage',
+      body: 'The show resumes.',
+      data: { kind: 'status', status: 'running' },
+    });
     const stage = stageOf(room);
     if (!game.liveHeat && (stage.phase === 'revealed' || stage.phase === 'idle')) {
       await nextHeat(ctx, room._id);
+    } else {
+      await resumeStage(ctx, room._id, pausedAt);
     }
   },
 });
