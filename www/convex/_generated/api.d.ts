@@ -22,6 +22,8 @@ import type * as rooms from "../rooms.js";
 import type * as servers from "../servers.js";
 import type * as skills__generated from "../skills/_generated.js";
 import type * as skills_index from "../skills/index.js";
+import type * as twitch from "../twitch.js";
+import type * as twitchIngest from "../twitchIngest.js";
 import type * as wizard from "../wizard.js";
 import type * as wizard_campaigns from "../wizard/campaigns.js";
 import type * as wizard_engine from "../wizard/engine.js";
@@ -50,6 +52,8 @@ declare const fullApi: ApiFromModules<{
   servers: typeof servers;
   "skills/_generated": typeof skills__generated;
   "skills/index": typeof skills_index;
+  twitch: typeof twitch;
+  twitchIngest: typeof twitchIngest;
   wizard: typeof wizard;
   "wizard/campaigns": typeof wizard_campaigns;
   "wizard/engine": typeof wizard_engine;

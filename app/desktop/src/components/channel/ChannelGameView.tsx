@@ -1,3 +1,6 @@
+import { useEffect } from 'react';
+import { useMutation } from 'convex/react';
+import { api } from '@maskord/convex';
 import { useAuth, useGuildChannels } from '@maskord/shared';
 import type { Channel } from '@maskord/shared';
 import VoiceChannel from '../voice/VoiceChannel';
@@ -37,7 +40,9 @@ interface Props {
 export default function ChannelGameView({ guildId, channelId, mode }: Props) {
   const { firebaseUser, profile } = useAuth();
   const channels = useGuildChannels(guildId);
-  const isVoice = channels.find((c: Channel) => c.id === channelId)?.type === 'voice';
+  const channel = channels.find((c: Channel) => c.id === channelId);
+  const isVoice = channel?.type === 'voice';
+  const isStageMode = mode === 'guillotine' || mode === 'marrymatemurder';
 
   const identity: RoomIdentity | null =
     firebaseUser && profile
@@ -62,6 +67,11 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
       <DndChannel guildId={guildId} channelId={channelId} />
     ) : mode === 'debate' ? (
       <DebateChannel guildId={guildId} channelId={channelId} />
+    ) : mode === 'guillotine' || mode === 'marrymatemurder' ? (
+      // The stage boards mount here: rooms/guillotine/ (guillotine) and
+      // rooms/marrymatemurder/ replace this placeholder with their component,
+      // keeping the TwitchIngestSync mount below intact.
+      <StagePending mode={mode} />
     ) : null;
 
   if (board) {
@@ -72,6 +82,9 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
             A table you talk at should not get a poorer voice UI than a voice
             channel — so it gets that one. */}
         <VoiceChannel guildId={guildId} channelId={channelId} compact />
+        {isStageMode && channel && (
+          <TwitchIngestSync guildId={guildId} channelId={channelId} mode={mode} channel={channel} />
+        )}
         {board}
       </div>
     ) : (
@@ -88,6 +101,57 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
       <p className="text-xs text-[#6b7280]">
         This channel is in <code className="text-violet-300">{mode}</code> mode, which has no
         board yet.
+      </p>
+    </Centered>
+  );
+}
+
+/**
+ * Keeps the room's Twitch bridge in step with the channel's settings while the
+ * board is open: the settings modal writes `twitchChannel` / `twitchIngest` to
+ * the channel doc, and this mirrors them into the Convex room, which starts or
+ * stops the ingest loop. `configure` is idempotent and self-healing, so every
+ * open tab calling it is by design — any viewer revives a dead loop.
+ */
+function TwitchIngestSync({
+  guildId,
+  channelId,
+  mode,
+  channel,
+}: {
+  guildId: string;
+  channelId: string;
+  mode: 'guillotine' | 'marrymatemurder';
+  channel: Channel;
+}) {
+  const configure = useMutation(api.twitch.configure);
+  const twitchChannel = channel.twitchChannel ?? '';
+  const enabled = !!channel.twitchIngest && !!twitchChannel;
+  const title = channel.name ? `#${channel.name}` : 'The stage';
+
+  useEffect(() => {
+    configure({
+      slug: `${mode}:ch-${channelId}`,
+      kind: mode,
+      guildId,
+      title,
+      twitchChannel,
+      enabled,
+    }).catch((err) => console.error('twitch configure failed', err));
+  }, [configure, mode, channelId, guildId, title, twitchChannel, enabled]);
+
+  return null;
+}
+
+function StagePending({ mode }: { mode: string }) {
+  return (
+    <Centered>
+      <p className="text-sm font-semibold text-white">
+        {mode === 'guillotine' ? 'The guillotine is being built' : 'The stage is being built'}
+      </p>
+      <p className="text-xs text-[#6b7280]">
+        This channel is ready for <code className="text-violet-300">{mode}</code>; the board
+        lands with the stage engine.
       </p>
     </Centered>
   );

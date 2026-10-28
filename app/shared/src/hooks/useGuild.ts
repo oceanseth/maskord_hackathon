@@ -182,7 +182,7 @@ export async function createChannel(
 export async function updateChannel(
   guildId: string,
   channelId: string,
-  updates: Partial<Pick<Channel, 'name' | 'topic' | 'position' | 'parentId' | 'claudeMode' | 'claudeMediaMode' | 'mode'>>,
+  updates: Partial<Pick<Channel, 'name' | 'topic' | 'position' | 'parentId' | 'claudeMode' | 'claudeMediaMode' | 'mode' | 'twitchChannel' | 'twitchIngest'>>,
 ): Promise<void> {
   const db = getFirebaseDb();
   await updateDoc(doc(db, 'guilds', guildId, 'channels', channelId), updates as Record<string, unknown>);

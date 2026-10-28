@@ -67,8 +67,14 @@ export function ChannelFeed({
       events.filter((e) => MIRRORED.has(e.type) && !(e.actorKey && humans.has(e.actorKey))).map((e) => e.body),
     );
     const botPrefix = `bot:${guildId}:`;
+    // Twitch chatters mirror under their real `twitch:<id>` uid, not a bot one,
+    // so the same event/mirror collapse has to recognise that prefix too.
     const fromMessages: FeedItem[] = messages
-      .filter((m) => !(m.authorId.startsWith(botPrefix) && mirrored.has(m.content)))
+      .filter(
+        (m) =>
+          !((m.authorId.startsWith(botPrefix) || m.authorId.startsWith('twitch:')) &&
+            mirrored.has(m.content)),
+      )
       .map((m) => ({
         kind: 'message',
         at: m.createdAt ? m.createdAt.toMillis() : Date.now(),
