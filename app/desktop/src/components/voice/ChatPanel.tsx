@@ -320,7 +320,7 @@ function ChatRow({ utterance, profile, avatarName, avatarsById, overrideText, is
           <SourceBadge source={utterance.source} />
           {utterance.streaming && !bodyText && (
             <span className="text-[10px] text-[#4b5563] italic">
-              {utterance.maskyOutput === 'video' ? 'rendering…' : 'streaming…'}
+              {utterance.maskyOutput === 'video' || utterance.maskyOutput === 'eleven-video' ? 'rendering…' : 'streaming…'}
             </span>
           )}
           {isPlaying && (

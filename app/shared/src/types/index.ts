@@ -61,6 +61,15 @@ export interface Guild {
   claudeAvatarOwnerUid?: string;
   /** masky avatarGroup doc ID. The avatar's displayName becomes the bot's name. */
   claudeAvatarId?: string;
+  /** Who renders talking-head video for avatar turns. `masky` (default) renders
+   *  on masky.ai; `elevenlabs` keeps masky for the reply text + voice but
+   *  lipsyncs the video through the ElevenLabs Image & Video API
+   *  (creatify-aurora) on the server host's machine. */
+  lipsyncProvider?: 'masky' | 'elevenlabs';
+  /** ElevenLabs API key (Pro plan+, Image & Video permission). Used by the
+   *  claiming client to render lipsync clips when `lipsyncProvider` is
+   *  `elevenlabs`. */
+  elevenLabsApiKey?: string;
 }
 
 export interface GuildMember {

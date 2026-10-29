@@ -238,7 +238,8 @@ export async function updateGuildSettings(
   guildId: string,
   updates: Partial<Pick<Guild,
     | 'name' | 'description' | 'iconUrl' | 'settings'
-    | 'claudeEnabled' | 'claudeApiKey' | 'claudeAvatarOwnerUid' | 'claudeAvatarId'
+    | 'claudeEnabled' | 'claudeApiKey' | 'maskyApiKey' | 'claudeAvatarOwnerUid' | 'claudeAvatarId'
+    | 'lipsyncProvider' | 'elevenLabsApiKey'
   >>,
 ) {
   const db = getFirebaseDb();

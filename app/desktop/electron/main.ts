@@ -84,6 +84,47 @@ ipcMain.handle('set-badge', (_event, count: number) => {
   }
 });
 
+// ─── CORS-free fetch for the ElevenLabs lipsync renderer ──────────────────────
+//
+// The renderer keeps webSecurity on, but the lipsync pipeline has to call the
+// ElevenLabs API and download the finished mp4 from their storage bucket —
+// neither of which is guaranteed to send CORS headers. Main-process fetch has
+// no CORS, so the renderer proxies those requests through here. Allowlisted
+// hosts only; bodies travel as base64.
+
+const PROXY_FETCH_HOSTS = new Set([
+  'api.elevenlabs.io',       // flows API (create + poll generations)
+  'storage.googleapis.com',  // signed content_url of finished generations
+  'masky.ai',                // live-media audio chunks
+  'ik.imagekit.io',          // avatar portraits
+  'firebasestorage.googleapis.com', // avatar portraits (legacy uploads)
+]);
+
+interface ProxyFetchRequest {
+  url: string;
+  method?: 'GET' | 'POST';
+  headers?: Record<string, string>;
+  bodyBase64?: string;
+}
+
+ipcMain.handle('proxy-fetch', async (_event, req: ProxyFetchRequest) => {
+  const url = new URL(req.url);
+  if (url.protocol !== 'https:' || !PROXY_FETCH_HOSTS.has(url.hostname)) {
+    throw new Error(`proxy-fetch: host not allowed: ${url.hostname}`);
+  }
+  const res = await fetch(req.url, {
+    method:  req.method ?? 'GET',
+    headers: req.headers,
+    body:    req.bodyBase64 ? Buffer.from(req.bodyBase64, 'base64') : undefined,
+  });
+  const body = Buffer.from(await res.arrayBuffer());
+  return {
+    status:      res.status,
+    contentType: res.headers.get('content-type') ?? '',
+    bodyBase64:  body.toString('base64'),
+  };
+});
+
 // ─── Twitch OAuth ─────────────────────────────────────────────────────────────
 
 const TWITCH_CLIENT_ID  = 'sgb17aslo6gesnetuqfnf6qql6jrae';

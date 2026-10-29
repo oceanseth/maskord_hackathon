@@ -27,8 +27,10 @@ export interface TranscriptUtterance {
   audioUrls?: string[];
   /** Talking-head ("video") reply pointer. The function fires the masky turn
    *  non-blocking and records these; the client watches the public liveTurns
-   *  mirror and plays each chunk's video as it renders. */
-  maskyOutput?: 'audio' | 'video';
+   *  mirror and plays each chunk's video as it renders. `eleven-video` means
+   *  masky rendered AUDIO chunks only and a claiming client lipsyncs them into
+   *  video through the guild's ElevenLabs key (see useElevenRenderer). */
+  maskyOutput?: 'audio' | 'video' | 'eleven-video';
   maskyViewerToken?: string;
   maskyAnchorTurnId?: string;
   /** Which avatar produced this reply (`avatarId`), for routing to its tile. */
@@ -83,7 +85,7 @@ export function useTranscript(
           createdAt: (data.createdAt as Timestamp | null) ?? null,
           audioUrl:  data.audioUrl as string | undefined,
           audioUrls: data.audioUrls as string[] | undefined,
-          maskyOutput:       data.maskyOutput as 'audio' | 'video' | undefined,
+          maskyOutput:       data.maskyOutput as TranscriptUtterance['maskyOutput'],
           maskyViewerToken:  data.maskyViewerToken as string | undefined,
           maskyAnchorTurnId: data.maskyAnchorTurnId as string | undefined,
           avatarId:  data.avatarId as string | undefined,

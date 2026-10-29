@@ -10,6 +10,7 @@ import { useMaskyAvatars, type MaskyAvatarGroup } from '../../hooks/useMaskyAvat
 
 type GuildPatch = Partial<Pick<Guild,
   'claudeEnabled' | 'claudeApiKey' | 'maskyApiKey' | 'claudeAvatarOwnerUid' | 'claudeAvatarId'
+  | 'lipsyncProvider' | 'elevenLabsApiKey'
 >>;
 type SaveStatus = 'idle' | 'saving' | 'saved' | 'error';
 
@@ -35,6 +36,13 @@ export default function AIAssistanceTab({ guildId }: Props) {
   const [keyDirty,   setKeyDirty]   = useState(false);
   const [maskyKey,      setMaskyKey]      = useState('');
   const [maskyKeyDirty, setMaskyKeyDirty] = useState(false);
+  const [lipsync,        setLipsync]        = useState<'masky' | 'elevenlabs'>('masky');
+  const [elevenKey,      setElevenKey]      = useState('');
+  const [elevenKeyDirty, setElevenKeyDirty] = useState(false);
+  // Mirror of elevenKeyDirty for the guild-snapshot reset effect: flipping the
+  // provider saves immediately, and that snapshot would otherwise wipe a key
+  // being typed before its debounced save fires.
+  const elevenKeyDirtyRef = useRef(false);
   const [selectedOwnerUid, setSelectedOwnerUid] = useState<string>(DEFAULT_CLAUDE_AVATAR.ownerUid);
   const [selectedAvatarId, setSelectedAvatarId] = useState<string>(DEFAULT_CLAUDE_AVATAR.avatarId);
 
@@ -45,6 +53,8 @@ export default function AIAssistanceTab({ guildId }: Props) {
     setKeyDirty(false);
     setMaskyKey(guild.maskyApiKey ?? '');
     setMaskyKeyDirty(false);
+    setLipsync(guild.lipsyncProvider === 'elevenlabs' ? 'elevenlabs' : 'masky');
+    if (!elevenKeyDirtyRef.current) setElevenKey(guild.elevenLabsApiKey ?? '');
     setSelectedOwnerUid(guild.claudeAvatarOwnerUid ?? DEFAULT_CLAUDE_AVATAR.ownerUid);
     setSelectedAvatarId(guild.claudeAvatarId ?? DEFAULT_CLAUDE_AVATAR.avatarId);
   }, [guild]);
@@ -127,6 +137,23 @@ export default function AIAssistanceTab({ guildId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [maskyKey, maskyKeyDirty]);
 
+  // Debounced ElevenLabs key save.
+  useEffect(() => {
+    if (!elevenKeyDirty) return;
+    const handle = setTimeout(() => {
+      save({ elevenLabsApiKey: elevenKey.trim() });
+      setElevenKeyDirty(false);
+      elevenKeyDirtyRef.current = false;
+    }, 500);
+    return () => clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [elevenKey, elevenKeyDirty]);
+
+  function pickLipsync(next: 'masky' | 'elevenlabs') {
+    setLipsync(next);
+    save({ lipsyncProvider: next });
+  }
+
   const mentionName = selectedChoice?.displayName ?? DEFAULT_CLAUDE_AVATAR.fallbackDisplayName;
 
   return (
@@ -174,6 +201,38 @@ export default function AIAssistanceTab({ guildId }: Props) {
           className="w-full px-3 py-2.5 rounded-lg bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none font-mono"
         />
       </Section>
+
+      {/* ── Lipsync provider ── */}
+      <Section
+        label="Lipsync provider"
+        hint="Who renders the avatar's talking-head video in video-mode voice channels. Masky renders it on masky.ai; ElevenLabs keeps the avatar's masky voice but lipsyncs the video through your ElevenLabs account (Creatify Aurora), rendered on the server host's machine and streamed to everyone else."
+      >
+        <select
+          value={lipsync}
+          onChange={(e) => pickLipsync(e.target.value === 'elevenlabs' ? 'elevenlabs' : 'masky')}
+          className="w-full px-3 py-2.5 rounded-lg bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none"
+        >
+          <option value="masky">Masky (default)</option>
+          <option value="elevenlabs">ElevenLabs</option>
+        </select>
+      </Section>
+
+      {/* ── ElevenLabs API key ── */}
+      {lipsync === 'elevenlabs' && (
+        <Section
+          label="ElevenLabs API key"
+          hint="From elevenlabs.io/app/api/api-keys. Needs a Pro plan or above with the Image & Video permission — lipsync renders bill this account's credits."
+        >
+          <input
+            type="password"
+            value={elevenKey}
+            onChange={(e) => { setElevenKey(e.target.value); setElevenKeyDirty(true); elevenKeyDirtyRef.current = true; }}
+            placeholder="sk_…"
+            autoComplete="off"
+            className="w-full px-3 py-2.5 rounded-lg bg-[#0a0a0f] border border-[#1e1e2e] focus:border-violet-600 text-white text-sm outline-none font-mono"
+          />
+        </Section>
+      )}
 
       {/* ── Avatar picker ── */}
       <Section label="Avatar" hint="Drives the bot's name, voice, and visual identity. Members reference it by name in chat.">
