@@ -1,15 +1,21 @@
+import * as crypto from 'crypto';
 import * as admin from 'firebase-admin';
 import { createConversation, postTurn } from './maskyConversation';
 
 /**
  * Stage faces on masky.ai /live.
  *
- * Each seated mask (and the host) gets one conversation. Silent waiting clips
- * keep the face moving between lines; a speak turn is what the live page plays
- * when it is that mask's line. The guild's mky_ key never leaves this function.
+ * Each seated mask gets one conversation, and the host is always the shared
+ * Masky. Silent waiting clips keep the face moving between lines; a speak
+ * turn is what the live page plays when it is that mask's line. The mky_ key
+ * never leaves this function.
  *
- * Defaults match app/shared/src/constants/claudeAvatar.ts — the shared Masky
- * a server uses until its owner picks one.
+ * A guild Masky key is used when Server Settings has one. Otherwise the
+ * avatar owner's own maskord key is created and reused — the same registration
+ * voice channels use for an invited avatar — so a stage still speaks when the
+ * server has not pasted a key.
+ *
+ * Defaults match app/shared/src/constants/claudeAvatar.ts.
  */
 
 const DEFAULT_HOST = {
@@ -47,6 +53,8 @@ type LiveRecord = {
   avatarId: string;
   avatarOwnerUserId: string;
   silent: boolean;
+  /** True when the conversation was opened with the avatar owner's key, not the guild key. */
+  billedToOwner?: boolean;
 };
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -63,8 +71,61 @@ function resolveLiveUrl(conv: { liveUrl: string; shareSlug: string; viewerToken:
   return `https://masky.ai/live/${encodeURIComponent(conv.shareSlug)}?token=${encodeURIComponent(conv.viewerToken)}`;
 }
 
-function docId(ownerUid: string, avatarId: string): string {
-  return `${ownerUid}__${avatarId}`.replace(/\//g, '_');
+function docId(role: 'host' | 'seat', ownerUid: string, avatarId: string): string {
+  return `${role}__${ownerUid}__${avatarId}`.replace(/\//g, '_');
+}
+
+/**
+ * A maskord-issued mky_ key for this uid, created once and reused.
+ * Registered the same way masky.ai/developer does: apiKeys/{sha256(key)}
+ * carries the owner, and the raw key stays in maskordUserKeys/{uid}.
+ * A transaction keeps two seats opening at once from each minting a key
+ * the other one's conversation cannot use.
+ */
+async function ensureUserMaskyKey(db: admin.firestore.Firestore, uid: string): Promise<string | null> {
+  if (!uid) return null;
+  try {
+    const ref = db.doc(`maskordUserKeys/${uid}`);
+    const existing = (await ref.get()).data()?.apiKey;
+    if (typeof existing === 'string' && existing.startsWith('mky_')) return existing;
+
+    const raw = 'mky_' + crypto.randomBytes(24).toString('hex');
+    const hash = crypto.createHash('sha256').update(raw).digest('hex');
+    await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const current = snap.data()?.apiKey;
+      if (typeof current === 'string' && current.startsWith('mky_')) return;
+      tx.set(db.doc(`apiKeys/${hash}`), {
+        ownerUid: uid,
+        name: 'maskord',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        lastUsedAt: null,
+        revokedAt: null,
+      });
+      tx.set(ref, {
+        apiKey: raw,
+        name: 'maskord',
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+    const saved = (await ref.get()).data()?.apiKey;
+    return typeof saved === 'string' && saved.startsWith('mky_') ? saved : null;
+  } catch (err) {
+    console.warn('[stage-live] ensureUserMaskyKey', (err as Error).message);
+    return null;
+  }
+}
+
+/** Guild key when the conversation was opened with one; otherwise the owner's. */
+async function resolveApiKey(
+  db: admin.firestore.Firestore,
+  guildKey: unknown,
+  ownerUid: string,
+  billedToOwner: boolean,
+): Promise<string | null> {
+  const guild = typeof guildKey === 'string' ? guildKey.trim() : '';
+  if (!billedToOwner && guild.startsWith('mky_')) return guild;
+  return ensureUserMaskyKey(db, ownerUid);
 }
 
 function videoSettled(d: admin.firestore.DocumentData): boolean {
@@ -163,34 +224,44 @@ export async function handleStageLive(
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const guild = await db.doc(`guilds/${guildId}`).get();
   const data = guild.data() ?? {};
-  const apiKey = data.maskyApiKey as string | undefined;
-  if (!apiKey) {
-    return {
-      status: 409,
-      json: {
-        error: 'no-masky-key',
-        message: 'This server has no Masky key. Set one in Server Settings → AI Assistance.',
-      },
-    };
-  }
+  const guildKey = data.maskyApiKey;
 
   if (body.op === 'stage-ensure') {
-    const avatarId = (body.avatarId || (data.claudeAvatarId as string) || DEFAULT_HOST.avatarId).trim();
+    // No avatar on the request means the host. She is the shared Masky, not
+    // whichever portrait the server picked for chat.
+    const hostSeat = !body.avatarId?.trim();
+    const avatarId = (hostSeat ? DEFAULT_HOST.avatarId : body.avatarId || '').trim();
     const avatarOwnerUserId = (
-      body.avatarOwnerUserId ||
-      (data.claudeAvatarOwnerUid as string) ||
-      DEFAULT_HOST.ownerUid
+      hostSeat ? DEFAULT_HOST.ownerUid : body.avatarOwnerUserId || ''
     ).trim();
     if (!avatarId || !avatarOwnerUserId) {
       return { status: 400, json: { error: 'avatar-required' } };
     }
 
-    const ref = db.doc(`guilds/${guildId}/stageLives/${docId(avatarOwnerUserId, avatarId)}`);
+    const billedToOwner = !(typeof guildKey === 'string' && guildKey.trim().startsWith('mky_'));
+    const apiKey = await resolveApiKey(db, guildKey, avatarOwnerUserId, billedToOwner);
+    if (!apiKey) {
+      return {
+        status: 409,
+        json: {
+          error: 'no-masky-key',
+          message: 'No Masky key for this avatar. Set one in Server Settings → AI Assistance.',
+        },
+      };
+    }
+
+    const ref = db.doc(`guilds/${guildId}/stageLives/${docId(hostSeat ? 'host' : 'seat', avatarOwnerUserId, avatarId)}`);
     const existing = await ref.get();
     if (existing.exists) {
       const cached = existing.data() as LiveRecord;
-      if (!cached.silent && cached.conversationId) {
-        const silent = await enableSilent(apiKey, cached.conversationId);
+      const cacheKey = await resolveApiKey(
+        db,
+        guildKey,
+        cached.avatarOwnerUserId || avatarOwnerUserId,
+        cached.billedToOwner === true,
+      );
+      if (!cached.silent && cached.conversationId && cacheKey) {
+        const silent = await enableSilent(cacheKey, cached.conversationId);
         if (silent) await ref.set({ silent: true }, { merge: true });
       }
       if (cached.conversationId && cached.liveUrl) {
@@ -214,6 +285,7 @@ export async function handleStageLive(
       avatarId,
       avatarOwnerUserId,
       silent,
+      billedToOwner,
     };
     await ref.set(record);
     return {
@@ -239,6 +311,16 @@ export async function handleStageLive(
     }
 
     const conv = owned.docs[0].data() as LiveRecord;
+    const apiKey = await resolveApiKey(db, guildKey, conv.avatarOwnerUserId, conv.billedToOwner === true);
+    if (!apiKey) {
+      return {
+        status: 409,
+        json: {
+          error: 'no-masky-key',
+          message: 'No Masky key for this avatar. Set one in Server Settings → AI Assistance.',
+        },
+      };
+    }
     const posted = await postTurn({
       conversation: {
         conversationId,
