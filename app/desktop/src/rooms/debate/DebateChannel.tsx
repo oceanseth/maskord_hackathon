@@ -8,6 +8,7 @@ import MobileBackButton from '../../components/ui/MobileBackButton';
 import { useAppStore } from '../../store/app';
 import { MemberStrip, StatusPill } from '../RoomPanel';
 import { ChannelFeed } from '../ChannelFeed';
+import { SideShelf } from '../SideShelf';
 import { useRoom, type RoomIdentity } from '../useRoom';
 
 /**
@@ -123,7 +124,7 @@ export default function DebateChannel({ guildId, channelId }: Props) {
         )}
       </div>
 
-      <div className="flex-1 flex min-h-0">
+      <div className="relative flex min-h-0 flex-1">
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           {showRoster && <MemberStrip members={room.members} meKey={room.me?.memberKey} />}
           <ChannelFeed
@@ -151,7 +152,7 @@ export default function DebateChannel({ guildId, channelId }: Props) {
         </div>
 
         {/* The plate: what this phase offers. */}
-        <aside className="w-72 shrink-0 border-l border-[#1f1f2e] flex flex-col min-h-0 bg-[#0c0c14] p-3 gap-3 overflow-y-auto scrollable">
+        <SideShelf label="Panel" bodyClassName="gap-3 p-3">
           {phase === 'setup' && (
             <>
               <p className="text-xs text-[#8b8fa3]">
@@ -241,7 +242,7 @@ export default function DebateChannel({ guildId, channelId }: Props) {
               )}
             </div>
           )}
-        </aside>
+        </SideShelf>
       </div>
     </div>
   );

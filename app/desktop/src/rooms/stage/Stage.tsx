@@ -259,7 +259,7 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
   };
 
   return (
-    <div className={`relative flex flex-col gap-2 px-4 pt-3 pb-4 bg-gradient-to-b from-[#1a1028] to-[#0e0e16] border-b border-[#1e1e2e] min-h-0 overflow-y-auto shrink ${className}`}>
+    <div className={`relative flex flex-col gap-2 px-2 sm:px-4 pt-3 pb-4 bg-gradient-to-b from-[#1a1028] to-[#0e0e16] border-b border-[#1e1e2e] min-h-0 overflow-x-hidden overflow-y-auto shrink ${className}`}>
       <StageStyles />
 
       {/* Status rail: host, caption, phase, mute. */}
@@ -299,25 +299,24 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
 
       {stage.line && talking === stage.line.label && <Subtitle text={stage.line.text} who={stage.line.name} />}
 
-      {/* The frames. Labels above, buttons below; the marker slides along the row. */}
-      <div className="flex justify-center pt-6">
-      <div className="relative flex">
-        {marker && markerIndex >= 0 && (
-          <div
-            className={`absolute top-0 z-10 text-4xl transition-all duration-700 ease-out ${showReveal ? 'stage-drop' : ''}`}
-            style={{ left: `calc(${((markerIndex + 0.5) / entrants.length) * 100}% + 58px)`, top: '64px' }}
-            aria-label={`${marker.verb} leader`}
-          >
-            {marker.icon}
-          </div>
-        )}
-
-        {entrants.map((e) => {
+      {/* The frames. Labels above, buttons below. Each column shrinks so three
+          faces stay on a phone once the side plate is out of the row. */}
+      <div className="flex w-full min-w-0 justify-center pt-6">
+      <div className="relative flex w-full min-w-0 max-w-[33rem] justify-center">
+        {entrants.map((e, index) => {
           const isTalking = talking === e.label;
           const picked = showReveal ? Object.entries(reveal?.majority ?? {}).filter(([, l]) => l === e.label).map(([verb]) => verb) : [];
           const stamped = marker && picked.includes(marker.verb);
           return (
-            <div key={e.label} className="flex flex-col items-center gap-2 w-44 px-2">
+            <div key={e.label} className="relative flex min-w-0 max-w-44 flex-1 basis-0 flex-col items-center gap-2 px-1 sm:px-2">
+              {marker && markerIndex === index && (
+                <div
+                  className="pointer-events-none absolute right-0 top-14 z-10 sm:right-1"
+                  aria-label={`${marker.verb} leader`}
+                >
+                  <div className={`text-3xl sm:text-4xl ${showReveal ? 'stage-drop' : ''}`}>{marker.icon}</div>
+                </div>
+              )}
               <span
                 className="text-2xl font-black leading-none px-3 py-1 rounded-lg bg-black/40 border-2"
                 style={{ borderColor: e.color ?? '#8b5cf6', color: e.color ?? '#c4b5fd' }}
@@ -343,7 +342,7 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
                       <button
                         disabled={!canVote || phase !== 'voting'}
                         onClick={() => onVote(e.label, verb)}
-                        className={`w-full px-2 py-1.5 rounded-lg text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed ${mine ? st.active : st.idle} ${won ? 'ring-2 ring-white' : ''}`}
+                        className={`w-full px-1.5 py-1.5 rounded-lg text-xs sm:text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed ${mine ? st.active : st.idle} ${won ? 'ring-2 ring-white' : ''}`}
                       >
                         {st.emoji} {st.label}
                       </button>
@@ -392,7 +391,7 @@ function EntrantFrame({
   const color = entrant.color ?? '#8b5cf6';
   return (
     <div
-      className={`relative w-28 h-28 rounded-2xl overflow-hidden border-4 flex items-center justify-center bg-[#12121c] transition ${talking ? 'stage-talk' : ''} ${dim ? 'opacity-50' : ''}`}
+      className={`relative aspect-square w-full max-w-28 rounded-2xl overflow-hidden border-4 flex items-center justify-center bg-[#12121c] transition ${talking ? 'stage-talk' : ''} ${dim ? 'opacity-50' : ''}`}
       style={{ borderColor: talking ? color : '#2a2a3e', boxShadow: talking ? `0 0 24px ${color}` : undefined }}
     >
       {liveUrl ? (

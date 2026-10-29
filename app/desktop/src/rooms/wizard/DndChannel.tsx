@@ -6,6 +6,7 @@ import MobileBackButton from '../../components/ui/MobileBackButton';
 import { useAppStore } from '../../store/app';
 import { DefaultEvent, MemberStrip, StatusPill } from '../RoomPanel';
 import { ChannelFeed } from '../ChannelFeed';
+import { SideShelf } from '../SideShelf';
 import { useRoom, type RoomEvent, type RoomIdentity } from '../useRoom';
 import { channelRoomSlug, useWizard } from './useWizard';
 import { Lobby } from './Lobby';
@@ -134,7 +135,7 @@ export default function DndChannel({ guildId, channelId }: Props) {
         )}
       </div>
 
-      <div className="flex-1 flex min-h-0">
+      <div className="relative flex min-h-0 flex-1">
         {/* The conversation: channel messages and the transcript, one stream. */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
           {showRoster && <MemberStrip
@@ -157,12 +158,18 @@ export default function DndChannel({ guildId, channelId }: Props) {
 
         {/* The table itself. */}
         {identity && (
-          <aside className="kf-plate w-[480px] shrink-0 border-l border-[#1f1f2e] flex flex-col min-h-0 overflow-y-auto">
+          <SideShelf
+            label="Table"
+            asideClassName="kf-plate"
+            inlineWidthClass="w-[480px]"
+            overlayWidthClass="w-full max-w-[480px]"
+            startOpen
+          >
             {phase === 'ruleset' && <CampaignPick wiz={wiz} />}
             {phase === 'characters' && <Lobby room={room} wiz={{ ...wiz, start: () => wiz.start(guildId) }} uid={identity.key} />}
             {phase === 'play' && <GamePanel room={room} wiz={wiz} />}
             {phase === 'resolve' && <Resolve wiz={wiz} />}
-          </aside>
+          </SideShelf>
         )}
       </div>
 
