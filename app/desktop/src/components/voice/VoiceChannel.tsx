@@ -141,14 +141,15 @@ export default function VoiceChannel({ guildId, channelId, compact = false, chro
   const { videoSpeakingId, videoSrc, handleVideoEnded, textByUtterance } =
     useTalkingHead(transcriptOn ? guildId : null, transcriptOn ? channelId : null);
 
-  // Stream local STT into the channel transcript while the user is connected
-  // and AI assistance is on. Other peers see your utterances appear live.
-  // Pause while muted so we're not transcribing dead air or side conversations.
+  // Stream local STT into the channel transcript while the user is connected.
+  // A quiet stretch ends the line and the channel feed shows it. This used to
+  // be tied to AI assistance, so a stage channel (which does not turn that on)
+  // never wrote a spoken line. Mute still pauses it.
   useBrowserSTT({
     guildId,
     channelId,
     userId:  firebaseUser?.uid ?? null,
-    enabled: transcriptOn && isConnected && !isMuted,
+    enabled: isConnected && !isMuted,
     maskName:      selectedMask?.displayName,
     maskAvatarUrl: selectedMask?.thumbnailUrl,
   });

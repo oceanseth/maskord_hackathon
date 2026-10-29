@@ -54,7 +54,10 @@ type Body = StageLiveBody & {
 };
 
 export const roomTurn = onRequest(
-  { cors: false, secrets: [bridgeSecret, bridgeGuilds], timeoutSeconds: 120 },
+  // A stage speak turn waits on the talking-head video (~70s) inside this
+  // request. The limit has to sit past that wait, or the board hears a timeout
+  // and speaks the line with the browser.
+  { cors: false, secrets: [bridgeSecret, bridgeGuilds], timeoutSeconds: 300 },
   async (req, res) => {
     if (req.method !== 'POST') {
       res.status(405).json({ error: 'POST only' });
