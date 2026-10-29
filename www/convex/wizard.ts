@@ -5,7 +5,9 @@ import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent, joinMember, setPhase } from './rooms';
 import { skillFor } from './skills';
+import { SKILLS } from './skills/_generated';
 import { CAMPAIGNS, type Campaign } from './wizard/campaigns';
+import { parsePlaybookScenes, wantsFight, wantsLook } from './wizard/playbook';
 import { hasInference } from './agent';
 import { hasResearch } from './research';
 import { PREGENS, SHEET_KEYS } from './wizard/pregens';
@@ -32,6 +34,7 @@ import {
   nearest,
   newCharacter,
   newCreature,
+  orderCombatants,
   pathTo,
   reachable,
   removeCondition,
@@ -66,7 +69,6 @@ type TurnState = { moved: number; actionUsed: boolean; bonusUsed: boolean; dashe
 
 const MASK_TURN_DELAY_MS = 900;
 const MONSTER_TURN_DELAY_MS = 1400;
-const ZOMBIES_RISE_AFTER_MS = 9000;
 /** One DM answer per room per this window; each answer is a model call. */
 const ASK_DM_COOLDOWN_MS = 15_000;
 /** The research branch runs up to three searches and three assessments, so it is rarer. */
@@ -330,11 +332,10 @@ async function seatCharacterLate(ctx: MutationCtx, room: Doc<'rooms'>, game: Gam
     const init = d20(rng, abilityMod(sheetOf(c), 'dex'));
     const combatants = game.combatants as Combatant[];
     combatants.push({ id: `pc:${key}`, name: c.name, initiative: init.total, side: 'party' });
-    // Slot in behind whoever is acting so the order stays stable for everyone else.
-    const active = combatants[game.turnIndex];
-    combatants.sort((a, b) => b.initiative - a.initiative);
-    game.turnIndex = Math.max(0, combatants.findIndex((x) => x.id === active.id));
-    game.combatants = combatants;
+    const acting = combatants[game.turnIndex];
+    const ordered = orderCombatants(combatants, (x) => kindOfCombatant(game, x));
+    game.turnIndex = Math.max(0, ordered.findIndex((x) => x.id === acting.id));
+    game.combatants = ordered;
     await dice(ctx, room, c.name, seat.ownerKey, `initiative ${fmtRoll(init)}`, { kind: 'initiative', total: init.total });
   }
   await save(ctx, game);
@@ -377,6 +378,7 @@ export const start = mutation({
     }
     game.characters = characters;
     game.phase = 'scene' satisfies Phase;
+    game.scene = 'voyage';
     game.round = 0;
     await save(ctx, game);
     await ctx.db.patch(roomId, { status: 'running' });
@@ -388,16 +390,11 @@ export const start = mutation({
     await host(
       ctx,
       room,
-      `Dragons of Stormwreck Isle. Two sailors row you the last stretch from the ship, past black rocks slick with weed, to a rickety dock at the island's north harbor. ` +
-        `Above you a switchback path climbs toward the cloister the captain called Dragon's Rest. The party: ${roster}. ` +
-        `Salt wind, gull cries, the crunch of golden sand under your boots. Take a breath and look around. What do you do?`,
-      { kind: 'scene', scene: 'arrival' },
+      `The captain would not take the ship into the island's main harbor — too many wrecks on those rocks, she said, and Stormwreck Isle did not earn the name by accident. She had you rowed the last stretch, toward a cloister on the cliffs called Dragon's Rest, where an elder named Runara takes in sailors, scholars, and anyone else the Sea of Swords still has business with. ` +
+        `Each of you has a reason to be in this boat. The party: ${roster}. ` +
+        `Two sailors pull the last strokes. Black volcanic rock slick with weed, a rickety dock at the north harbor, a switchback climbing toward the cloister. Salt wind, gull cries, the crunch of golden sand. The island is quiet. Look around. Talk. Decide. What do you do?`,
+      { kind: 'scene', scene: 'voyage' },
     );
-    await ctx.scheduler.runAfter(0, internal.wizard.narrate, {
-      roomId,
-      beat: 'The party has just landed on the beach at the north harbor. Set the scene in two or three sentences, in your own DM voice, then ask what they do. Do not introduce enemies yet.',
-    });
-    await ctx.scheduler.runAfter(ZOMBIES_RISE_AFTER_MS, internal.wizard.zombiesRise, { roomId });
   },
 });
 
@@ -465,8 +462,9 @@ export const onPhaseTool = internalMutation({
 
 /**
  * A person closes the session (play -> resolve). Only once the encounter is
- * over: in `scene` the zombies are still scheduled to rise and in `combat` a
- * turn is in flight, and both would keep running under a finished room.
+ * over: in `combat` a turn is in flight, and that would keep running under a
+ * finished room. Exploration (`scene`) can end only after the fight, or from
+ * the cloister.
  */
 export const endSession = mutation({
   args: { roomId: v.id('rooms'), memberKey: v.string() },
@@ -502,6 +500,7 @@ async function resetTable(ctx: MutationCtx, room: Doc<'rooms'>, game: Game, by: 
   game.creatures = [];
   game.fires = [];
   game.xp = 0;
+  delete (game as { scene?: string }).scene;
   game.turn = { moved: 0, actionUsed: false, bonusUsed: false, dashed: false, startedAt: 0 } satisfies TurnState;
   if (mode === 'new') game.seats = {};
   await save(ctx, game);
@@ -559,14 +558,19 @@ export const zombiesRise = internalMutation({
       await ctx.scheduler.runAfter(3000, internal.wizard.zombiesRise, { roomId });
       return;
     }
-    const creatures: CreatureState[] = BEACH_ZOMBIE_START.map((pos, i) =>
-      newCreature('zombie', `zombie-${i + 1}`, ZOMBIE_NAMES[i], pos, rng),
-    );
+    const existing = (game.creatures as CreatureState[]).filter((z) => !z.conditions.includes('dead'));
+    const creatures: CreatureState[] = existing.length
+      ? existing
+      : BEACH_ZOMBIE_START.map((pos, i) => newCreature('zombie', `zombie-${i + 1}`, ZOMBIE_NAMES[i], pos, rng));
     game.creatures = creatures;
+    game.scene = 'drowned-sailors';
+    const alreadySeen = existing.length > 0;
     await host(
       ctx,
       room,
-      `Something moves among the crags. Three shapes drag themselves up out of the surf and the rocks: gray, bloated, still wearing the rags of sailors' coats. Drowned sailors, and they are walking. They are about thirty feet off and closing. Roll for initiative!`,
+      alreadySeen
+        ? `The drowned sailors break into a shambling run. There is no more talking this through. Roll for initiative!`
+        : `Something moves among the crags. Three shapes drag themselves up out of the surf and the rocks: gray, bloated, still wearing the rags of sailors' coats. Drowned sailors, and they are walking. They are about thirty feet off and closing. Roll for initiative!`,
       { kind: 'scene', scene: 'drowned-sailors' },
     );
 
@@ -592,19 +596,59 @@ export const zombiesRise = internalMutation({
       });
     }
 
-    combatants.sort((a, b) => b.initiative - a.initiative || (a.side === 'party' ? -1 : 1));
-    game.combatants = combatants;
+    const ordered = orderCombatants(combatants, (c) => kindOfCombatant(game, c));
+    game.combatants = ordered;
     game.phase = 'combat' satisfies Phase;
     game.round = 1;
     game.turnIndex = 0;
-    await host(ctx, room, `Order: ${combatants.map((c) => `${c.name} (${c.initiative})`).join(', ')}. Round 1.`, { kind: 'order' });
+    await host(ctx, room, `Order: ${ordered.map((c) => `${c.name} (${c.initiative})`).join(', ')}. People first, then masks, then the drowned. Round 1.`, { kind: 'order' });
     await save(ctx, game);
     await beginTurn(ctx, room, game);
   },
 });
 
+/** Put the drowned sailors on the sand as a shot, not as an encounter. */
+async function revealSailors(ctx: MutationCtx, room: Doc<'rooms'>, game: Game): Promise<boolean> {
+  if ((game.creatures as CreatureState[]).some((z) => !z.conditions.includes('dead'))) return false;
+  game.creatures = BEACH_ZOMBIE_START.map((pos, i) =>
+    newCreature('zombie', `zombie-${i + 1}`, ZOMBIE_NAMES[i], pos, rng),
+  );
+  game.scene = 'look';
+  await save(ctx, game);
+  await host(
+    ctx,
+    room,
+    `Among the crags, something pale. Three shapes in sailors' coats, too still — then not still at all. Drowned crew, hauling themselves out of the surf about thirty feet off. They have not closed yet. You can talk, run, call up the path, or stand and fight. What do you do?`,
+    { kind: 'scene', scene: 'look' },
+  );
+  return true;
+}
+
 function ownerOf(game: Game, key: SheetKey): string | undefined {
   return (game.seats as Seats)[key]?.ownerKey;
+}
+
+function kindOfCombatant(game: Game, c: Combatant): 'human' | 'mask' | 'enemy' {
+  if (c.side === 'enemy') return 'enemy';
+  const key = c.id.startsWith('pc:') ? (c.id.slice(3) as SheetKey) : null;
+  const seat = key ? (game.seats as Seats)[key] : undefined;
+  return seat?.ownerKind === 'human' ? 'human' : 'mask';
+}
+
+function playbookScenes() {
+  return parsePlaybookScenes(SKILLS.dndcampaign?.playbook ?? '');
+}
+
+/** Beat file for a playbook scene, or null if this id is only a channel phase. */
+function sceneBeat(id: string, host: string): string | null {
+  if (!id || id === 'playbook') return null;
+  const text = SKILLS.dndcampaign?.[id];
+  if (!text) return null;
+  return text.replace(/\{\{host\}\}/g, host).trim();
+}
+
+function sceneOf(game: Game | null | undefined): string {
+  return game?.scene || 'voyage';
 }
 
 // ---------------------------------------------------------------------------
@@ -716,6 +760,7 @@ async function checkEnd(ctx: MutationCtx, room: Doc<'rooms'>, game: Game): Promi
   if (game.phase !== 'combat') return true;
   if (livingEnemies(game).length === 0) {
     game.phase = 'victory' satisfies Phase;
+    game.scene = 'victory';
     game.xp += (game.creatures as CreatureState[]).length * STAT_BLOCKS.zombie.xp;
     await save(ctx, game);
     await host(
@@ -758,10 +803,7 @@ export const kick = internalMutation({
   handler: async (ctx, { roomId }) => {
     const { room, game } = await roomAndGame(ctx, roomId);
     if (room.status !== 'running') return;
-    if (game.phase === 'scene') {
-      await ctx.scheduler.runAfter(1500, internal.wizard.zombiesRise, { roomId });
-      return;
-    }
+    if (game.phase === 'scene') return;
     if (game.phase !== 'combat') return;
     const who = active(game);
     if (!who) return;
@@ -1519,13 +1561,18 @@ function stateFor(phase: DndPhase, room: Doc<'rooms'>, game: Game | null, member
       campaignLine();
       lines.push(`Party: ${rosterOf(game) || 'not seated yet'}.`);
       const where: Record<string, string> = {
-        scene: 'the party has just landed on the beach; nothing has attacked yet',
-        combat: `round ${game?.round ?? 0} of the fight on the beach`,
+        scene: `playbook scene "${sceneOf(game)}" — the table is exploring; combat has not started`,
+        combat: `round ${game?.round ?? 0} of the fight (${sceneOf(game)})`,
         victory: 'the beach is won; Elder Runara is coming down to greet them',
         cloister: "the party is at Dragon's Rest, exploring and talking",
         defeat: 'the party has fallen',
       };
       lines.push(`Scene: ${where[game?.phase ?? 'scene'] ?? game?.phase}.`);
+      lines.push('Playbook (in order; a "combat" scene waits until someone at the table fights):');
+      for (const s of playbookScenes()) {
+        const here = s.id === sceneOf(game) ? ' ← you are here' : '';
+        lines.push(`- ${s.id}${s.combat ? ' (combat)' : ''}${here}`);
+      }
       if (findings.length) {
         lines.push('Researched by the table (cite when relevant):');
         for (const f of findings) lines.push(f);
@@ -1579,13 +1626,26 @@ export const narrate = internalMutation({
 export const askDm = mutation({
   args: { roomId: v.id('rooms'), memberKey: v.string(), text: v.string() },
   handler: async (ctx, { roomId, memberKey, text }) => {
-    const { room } = await roomAndGame(ctx, roomId);
+    const { room, game } = await roomAndGame(ctx, roomId);
     const member = await memberOf(ctx, roomId, memberKey);
     if (!member) throw new Error('Not at the table');
     await appendEvent(ctx, roomId, { type: 'say', actorKey: memberKey, actorName: member.name, body: text.trim().slice(0, 1000) });
     if (/\b(pause|hold on|wait|one sec|character sheet)\b/i.test(text) && room.status === 'running') {
       await ctx.scheduler.runAfter(0, internal.wizard.setPausedInternal, { roomId, memberKey, reason: 'asked to pause' });
       return { answered: false as const, reason: 'paused' as const };
+    }
+    const phase = phaseOf(room, game);
+    if (phase === 'play' && game.phase === 'scene') {
+      if (wantsFight(text)) {
+        await ctx.scheduler.runAfter(0, internal.wizard.zombiesRise, { roomId });
+        return { answered: true as const };
+      }
+      if (wantsLook(text)) {
+        await revealSailors(ctx, room, game);
+      } else if (sceneOf(game) === 'voyage') {
+        game.scene = 'arrival';
+        await save(ctx, game);
+      }
     }
     // The message is always recorded; what is rationed is the spend behind the
     // answer. A member (guests included) holding the send key must not turn
@@ -1607,13 +1667,14 @@ export const askDm = mutation({
       });
     }
     const said = `${member.name} just said: "${text.trim().slice(0, 500)}".`;
+    const scene = sceneBeat(sceneOf(game), room.hostName);
     const beats: Record<DndPhase, string> = {
       ruleset: `${said} If they named a campaign or clearly agreed to the one on offer, call choose_campaign. Otherwise answer as the host in one to three sentences, or say nothing if it needs no answer.`,
       characters: `${said} Answer as the host in one to three sentences: describe a sheet if they asked about one, suggest one if they asked what to play, nudge toward confirming if that is what the table needs, or say nothing if it needs no answer.`,
-      play: `${said} Answer them as the DM in one to three sentences. If it is a rules question, answer accurately for 5e 2014${asksForSources ? ' and say the table is looking it up (research results will be posted to the room)' : ''}. If they are describing an action in combat, tell them to use the action controls (the engine resolves actions) but react to their intent in character.`,
+      play: `${said}${scene ? `\n\nCurrent playbook scene (${sceneOf(game)}):\n${scene}\n` : ''}\nAnswer them as the DM in one to three sentences. Stay in that scene. If it is a rules question, answer accurately for 5e 2014${asksForSources ? ' and say the table is looking it up (research results will be posted to the room)' : ''}. If they are describing an action in combat, tell them to use the action controls (the engine resolves actions) but react to their intent in character. Never start a fight because time passed.`,
       resolve: `${said} Answer in one to three sentences. If they want to play again or start fresh, tell them the buttons under the recap are theirs.`,
     };
-    await ctx.scheduler.runAfter(0, internal.wizard.narrate, { roomId, beat: beats[phaseOf(room, await gameFor(ctx, roomId))] });
+    await ctx.scheduler.runAfter(0, internal.wizard.narrate, { roomId, beat: beats[phase] });
     return { answered: true as const };
   },
 });
@@ -1646,6 +1707,7 @@ export const walkUp = mutation({
     if (game.phase !== 'victory') throw new Error('The beach is not yours yet');
     const member = await memberOf(ctx, roomId, memberKey);
     game.phase = 'cloister' as Phase;
+    game.scene = 'cloister';
     game.combatants = [];
     await save(ctx, game);
     await appendEvent(ctx, roomId, { type: 'action', actorKey: memberKey, actorName: member?.name ?? 'the party', body: 'leads the way up the stairs.', data: { kind: 'walkUp' } });

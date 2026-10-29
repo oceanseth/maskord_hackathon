@@ -29,8 +29,10 @@ import './theme.css';
  *
  * The channel walks four phases — ruleset, characters, play, resolve — and the
  * right-hand plate shows the one it is in: the campaign catalogue, the sheet
- * fan, the board, the recap. The host hears every message in every phase and
- * is prompted with that phase's skillfile (www/convex/skills/dnd).
+ * fan, the board, the recap. During play the host follows
+ * `www/convex/skills/dndcampaign/playbook.md`: a narrator-first scene list
+ * whose fight scenes wait until someone at the table commits. The host hears
+ * every message in every phase and is prompted with that phase's skillfile.
  */
 
 interface Props {
@@ -159,7 +161,7 @@ export default function DndChannel({ guildId, channelId }: Props) {
         {identity && (
           <aside className="kf-plate w-[480px] shrink-0 border-l border-[#1f1f2e] flex flex-col min-h-0 overflow-y-auto">
             {phase === 'ruleset' && <CampaignPick wiz={wiz} />}
-            {phase === 'characters' && <Lobby room={room} wiz={{ ...wiz, start: () => wiz.start(guildId) }} uid={identity.key} />}
+            {phase === 'characters' && <Lobby room={room} wiz={{ ...wiz, start: () => wiz.start(guildId) }} uid={identity.key} guildId={guildId} channelId={channelId} />}
             {phase === 'play' && <GamePanel room={room} wiz={wiz} />}
             {phase === 'resolve' && <Resolve wiz={wiz} />}
           </aside>

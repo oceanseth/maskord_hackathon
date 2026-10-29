@@ -3,6 +3,7 @@ import { PREGENS, SHEET_KEYS } from '../../../../../www/convex/wizard/pregens';
 import { HOUSE_MASKS } from '../../../../../www/convex/cast';
 import type { SheetKey } from '../../../../../www/convex/wizard/types';
 import { useMaskyAvatars } from '../../hooks/useMaskyAvatars';
+import { inviteAvatarToVoiceChannel, dismissAvatarFromVoiceChannel } from '../../lib/inviteAvatarToVoice';
 import { SheetCard } from './SheetCard';
 import type { RoomHandle } from '../useRoom';
 import type { WizardHandle } from './useWizard';
@@ -12,7 +13,13 @@ import type { WizardHandle } from './useWizard';
  * it, flip it, minimise it to see who else is at the table, then confirm.
  * The game starts when every human present has confirmed.
  */
-export function Lobby({ room, wiz, uid }: { room: RoomHandle; wiz: WizardHandle; uid: string }) {
+export function Lobby({ room, wiz, uid, guildId, channelId }: {
+  room: RoomHandle;
+  wiz: WizardHandle;
+  uid: string;
+  guildId?: string;
+  channelId?: string;
+}) {
   const [selected, setSelected] = useState<SheetKey | null>(null);
   const [minimised, setMinimised] = useState(false);
   const [name, setName] = useState('');
@@ -31,10 +38,37 @@ export function Lobby({ room, wiz, uid }: { room: RoomHandle; wiz: WizardHandle;
     p.catch((e) => setError((e as Error).message.replace(/^.*Uncaught Error: /, '').split('\n')[0]));
   };
 
+  const bringMasky = (g: { id: string; displayName: string; personalityPrompt?: string; thumbnailUrl?: string }) =>
+    run((async () => {
+      await wiz.seatMask({
+        key: `mask:${g.id}`,
+        name: g.displayName,
+        persona: g.personalityPrompt ?? '',
+        avatarUrl: g.thumbnailUrl,
+      });
+      if (guildId) {
+        try {
+          await inviteAvatarToVoiceChannel(guildId, g.displayName, channelId);
+        } catch (e) {
+          setError(
+            `${g.displayName} is at the table, but not in voice: ${(e as Error).message.replace(/^.*Uncaught Error: /, '').split('\n')[0]}. Join the call and invite them, or they will stay a mute tile.`,
+          );
+        }
+      }
+    })());
+
+  const sendOut = (memberKey: string, name: string) =>
+    run((async () => {
+      await wiz.unseatMask(memberKey);
+      if (guildId && memberKey.startsWith('mask:')) {
+        await dismissAvatarFromVoiceChannel(guildId, name, channelId).catch(() => {});
+      }
+    })());
+
   return (
     <div className="flex-1 min-h-0 scrollable p-3 space-y-3">
       <div className="text-xs text-[#8b8fa3]">
-        Dragons of Stormwreck Isle · a 5e beginner adventure. Choose a character sheet, then confirm. The game begins when everyone at the table has.
+        Dragons of Stormwreck Isle · a 5e beginner adventure. Choose a character sheet, then confirm. The voyage begins when everyone at the table has.
       </div>
 
       {/* The fan */}
@@ -104,7 +138,7 @@ export function Lobby({ room, wiz, uid }: { room: RoomHandle; wiz: WizardHandle;
                 <li key={m._id} className="flex items-center gap-2">
                   <span className="font-semibold">{m.name}</span>
                   <span className="text-[#8b8fa3]">{key ? `${PREGENS[key].race} ${PREGENS[key].className}` : ''}</span>
-                  <button className="ml-auto text-[10px] text-[#8b8fa3] hover:text-red-300" onClick={() => run(wiz.unseatMask(m.memberKey))}>remove</button>
+                  <button className="ml-auto text-[10px] text-[#8b8fa3] hover:text-red-300" onClick={() => sendOut(m.memberKey, m.name)}>remove</button>
                 </li>
               );
             })}
@@ -113,7 +147,7 @@ export function Lobby({ room, wiz, uid }: { room: RoomHandle; wiz: WizardHandle;
         {freeSheets.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {avatarGroups.filter((g) => !seatedMasks.some((m) => m.memberKey === `mask:${g.id}`)).map((g) => (
-              <button key={g.id} className="text-xs px-2 py-1 rounded bg-fuchsia-900/50 hover:bg-fuchsia-800/60 border border-fuchsia-700/50 flex items-center gap-1" onClick={() => run(wiz.seatMask({ key: `mask:${g.id}`, name: g.displayName, persona: g.personalityPrompt ?? '', avatarUrl: g.thumbnailUrl }))}>
+              <button key={g.id} className="text-xs px-2 py-1 rounded bg-fuchsia-900/50 hover:bg-fuchsia-800/60 border border-fuchsia-700/50 flex items-center gap-1" onClick={() => bringMasky(g)}>
                 {g.thumbnailUrl && <img src={g.thumbnailUrl} alt="" className="w-4 h-4 rounded-full object-cover" />}
                 Bring {g.displayName}
               </button>

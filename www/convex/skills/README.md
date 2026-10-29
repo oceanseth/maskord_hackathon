@@ -6,6 +6,12 @@ channel is in that phase. The file is the *static* part; the kind module
 seats, findings and whatever else the phase needs, and passes the whole thing
 as `system` to `agent.runTurn`.
 
+D&D also keeps a **playbook**: `dndcampaign/playbook.md` lists scenes in order
+inside a fenced `scenes` block, and each scene has its own beat file
+(`voyage.md`, `look.md`, …). Combat scenes are marked in that list; the engine
+will not start dice until someone at the table fights. Edit those files to
+change the story. `wizard/playbook.ts` parses the list.
+
 The only substitution the loader makes is `{{host}}`, the room's host name.
 
 Convex bundles functions with esbuild, which has no loader for `.md`, so
