@@ -42,6 +42,18 @@ type LiveRecord = {
 
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * The create-conversation API usually returns `liveUrl`. When it does not, the
+ * embed is the public live page for that share slug plus the viewer token —
+ * the same URL `liveUrlForToken` builds on masky.ai.
+ */
+function resolveLiveUrl(conv: { liveUrl: string; shareSlug: string; viewerToken: string }): string {
+  const direct = conv.liveUrl?.trim();
+  if (direct) return direct;
+  if (!conv.shareSlug || !conv.viewerToken) return '';
+  return `https://masky.ai/live/${encodeURIComponent(conv.shareSlug)}?token=${encodeURIComponent(conv.viewerToken)}`;
+}
+
 function docId(ownerUid: string, avatarId: string): string {
   return `${ownerUid}__${avatarId}`.replace(/\//g, '_');
 }
@@ -162,13 +174,14 @@ export async function handleStageLive(
     }
 
     const conv = await createConversation({ apiKey, avatarOwnerUserId, avatarId });
-    if (!conv?.liveUrl) {
+    const liveUrl = conv ? resolveLiveUrl(conv) : '';
+    if (!conv || !liveUrl) {
       return { status: 502, json: { error: 'conversation-failed' } };
     }
     const silent = await enableSilent(apiKey, conv.conversationId);
     const record: LiveRecord = {
       conversationId: conv.conversationId,
-      liveUrl: conv.liveUrl,
+      liveUrl,
       shareSlug: conv.shareSlug,
       avatarId,
       avatarOwnerUserId,
