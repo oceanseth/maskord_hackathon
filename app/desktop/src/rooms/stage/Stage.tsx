@@ -11,11 +11,11 @@ import { api } from '@maskord/convex';
  * mounts this with its own verbs' styling and, optionally, a `marker` — the
  * guillotine that slides to whoever leads the Execute vote.
  *
- * Voicelines play in each viewer's own browser (speech synthesis), started by
- * the line's `seq` changing on the server. Every tab hears the same line at
- * the same moment because the server clock — not the tab — decides when a line
- * starts, and a tab that joins halfway through a line stays quiet rather than
- * starting it late.
+ * A mask with a Masky /live conversation is an iframe of that page: silent
+ * waiting clips keep the face moving, and each line is a speak turn the page
+ * plays in the mask's own voice. Seats without one (the guillotine's
+ * billionaires) still use the browser's speech synthesis, started by the
+ * line's `seq`. A tab that joins halfway through a browser line stays quiet.
  */
 
 export type StageData = NonNullable<ReturnType<typeof useStageQuery>>;
@@ -61,6 +61,19 @@ export function useStage(slug: string, voter: StageVoter | null) {
 
 const MUTE_KEY = 'maskord.stage.muted';
 
+/** The live page loops silent waiting clips, and only plays turns posted after it opens. */
+function stageLiveSrc(liveUrl: string): string {
+  try {
+    const url = new URL(liveUrl);
+    url.searchParams.set('silent', '1');
+    url.searchParams.set('since', 'now');
+    return url.toString();
+  } catch {
+    const join = liveUrl.includes('?') ? '&' : '?';
+    return `${liveUrl}${join}silent=1&since=now`;
+  }
+}
+
 function pickVoice(seed: string): SpeechSynthesisVoice | undefined {
   if (typeof window === 'undefined' || !window.speechSynthesis) return undefined;
   const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.toLowerCase().startsWith('en'));
@@ -83,6 +96,8 @@ function useStageVoice(data: StageData | null | undefined, muted: boolean): stri
   useEffect(() => {
     if (!line || line.seq === lastSeq.current) return;
     lastSeq.current = line.seq;
+    // The /live iframe plays this one. A second voice here would talk over it.
+    if (line.voiced === 'live') return;
     const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
     if (!synth || muted) return;
     // Joined mid-line: stay quiet rather than start a line late over the next one.
@@ -190,7 +205,7 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
     return (
       <div className="relative flex flex-col items-center justify-center gap-3 py-8 bg-gradient-to-b from-[#1a1028] to-[#0e0e16] border-b border-[#1e1e2e]">
         <StageStyles />
-        <HostFrame name={hostName} talking={talking === 'host'} />
+        <HostFrame name={hostName} talking={talking === 'host'} liveUrl={muted ? undefined : stage?.hostLive?.liveUrl} />
         {stage?.line?.label === 'host' && <Subtitle text={stage.line.text} />}
         {empty}
       </div>
@@ -247,7 +262,7 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
 
       {/* Status rail: host, caption, phase, mute. */}
       <div className="flex items-center gap-3">
-        <HostFrame name={hostName} talking={talking === 'host'} small />
+        <HostFrame name={hostName} talking={talking === 'host'} small liveUrl={muted ? undefined : stage?.hostLive?.liveUrl} />
         <div className="flex flex-col min-w-0">
           {stage.caption && (
             <span className="text-[11px] uppercase tracking-wider text-violet-300 truncate">{stage.caption}</span>
@@ -307,7 +322,13 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
               >
                 {e.label}
               </span>
-              <EntrantFrame entrant={e} talking={isTalking} dim={phase === 'speeches' && !!talking && !isTalking} stamp={stamped ? marker!.stamp : undefined} />
+              <EntrantFrame
+                entrant={e}
+                talking={isTalking}
+                dim={phase === 'speeches' && !!talking && !isTalking}
+                stamp={stamped ? marker!.stamp : undefined}
+                liveUrl={muted ? undefined : e.live?.liveUrl}
+              />
               <span className="text-sm font-semibold text-white text-center leading-tight">{e.name}</span>
               <div className="flex flex-col gap-1 w-full">
                 {stage.verbs.map((verb) => {
@@ -358,11 +379,13 @@ function EntrantFrame({
   talking,
   dim,
   stamp,
+  liveUrl,
 }: {
   entrant: StageEntrantView;
   talking: boolean;
   dim: boolean;
   stamp?: string;
+  liveUrl?: string;
 }) {
   const color = entrant.color ?? '#8b5cf6';
   return (
@@ -370,7 +393,9 @@ function EntrantFrame({
       className={`relative w-28 h-28 rounded-2xl overflow-hidden border-4 flex items-center justify-center bg-[#12121c] transition ${talking ? 'stage-talk' : ''} ${dim ? 'opacity-50' : ''}`}
       style={{ borderColor: talking ? color : '#2a2a3e', boxShadow: talking ? `0 0 24px ${color}` : undefined }}
     >
-      {entrant.avatarUrl ? (
+      {liveUrl ? (
+        <LiveFace liveUrl={liveUrl} name={entrant.name} />
+      ) : entrant.avatarUrl ? (
         <img src={entrant.avatarUrl} alt={entrant.name} className="w-full h-full object-cover" />
       ) : (
         <div className="flex flex-col items-center">
@@ -380,7 +405,8 @@ function EntrantFrame({
           </span>
         </div>
       )}
-      {/* The mouth: sound bars that only move while the line plays. */}
+      {/* Sound bars for the browser voice. A live face moves on its own. */}
+      {!liveUrl && (
       <div className="absolute bottom-1 left-1/2 -translate-x-1/2 flex items-end gap-0.5 h-4">
         {[0, 1, 2, 3, 4].map((i) => (
           <span
@@ -390,6 +416,7 @@ function EntrantFrame({
           />
         ))}
       </div>
+      )}
       {stamp && (
         <div className="absolute inset-0 flex items-center justify-center bg-red-900/60">
           <span className="text-sm font-black tracking-widest text-white border-2 border-white px-2 py-0.5 -rotate-12">
@@ -401,16 +428,43 @@ function EntrantFrame({
   );
 }
 
-function HostFrame({ name, talking, small }: { name: string; talking: boolean; small?: boolean }) {
+function HostFrame({
+  name,
+  talking,
+  small,
+  liveUrl,
+}: {
+  name: string;
+  talking: boolean;
+  small?: boolean;
+  liveUrl?: string;
+}) {
+  const box = liveUrl ? 'w-28 h-28 rounded-2xl' : small ? 'w-10 h-10 text-2xl rounded-full' : 'w-20 h-20 text-5xl rounded-full';
   return (
     <div className="flex items-center gap-2">
       <div
-        className={`${small ? 'w-10 h-10 text-2xl' : 'w-20 h-20 text-5xl'} rounded-full border-2 flex items-center justify-center bg-[#1e1430] ${talking ? 'stage-talk border-violet-400' : 'border-[#3a2a5e]'}`}
+        className={`relative ${box} border-2 flex items-center justify-center overflow-hidden bg-[#1e1430] ${talking ? 'stage-talk border-violet-400' : 'border-[#3a2a5e]'}`}
       >
-        <span className={talking ? 'stage-head' : ''}>🎭</span>
+        {liveUrl ? (
+          <LiveFace liveUrl={liveUrl} name={name} />
+        ) : (
+          <span className={talking ? 'stage-head' : ''}>🎭</span>
+        )}
       </div>
-      {!small && <span className="text-sm font-semibold text-violet-200">{name}</span>}
+      {!small && !liveUrl && <span className="text-sm font-semibold text-violet-200">{name}</span>}
     </div>
+  );
+}
+
+/** The masky.ai /live page: idle clips while it waits, the speak turn when it lands. */
+function LiveFace({ liveUrl, name }: { liveUrl: string; name: string }) {
+  return (
+    <iframe
+      src={stageLiveSrc(liveUrl)}
+      title={`${name} live`}
+      allow="autoplay; encrypted-media"
+      className="absolute inset-0 h-full w-full border-0 bg-black"
+    />
   );
 }
 
