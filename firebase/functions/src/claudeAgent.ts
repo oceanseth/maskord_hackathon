@@ -30,6 +30,11 @@ interface GuildClaudeCfg {
   maskyApiKey?:   string;
   avatarOwnerUid?: string;
   avatarId?:       string;
+  /** True when the server owner picked ElevenLabs as the lipsync provider AND
+   *  supplied an API key. Video turns then render masky AUDIO chunks only and
+   *  are stamped `maskyOutput: 'eleven-video'`; a connected client claims the
+   *  turn and lipsyncs the chunks through the ElevenLabs API client-side. */
+  elevenLipsync:  boolean;
 }
 
 interface ChannelClaudeCfg {
@@ -76,6 +81,8 @@ async function loadGuildCfg(guildId: string): Promise<GuildClaudeCfg | null> {
     maskyApiKey:    d.maskyApiKey,
     avatarOwnerUid: d.claudeAvatarOwnerUid,
     avatarId:       d.claudeAvatarId,
+    elevenLipsync:  d.lipsyncProvider === 'elevenlabs'
+      && typeof d.elevenLabsApiKey === 'string' && d.elevenLabsApiKey.length > 0,
   };
 }
 
@@ -1104,6 +1111,9 @@ async function respondAsAvatar(opts: {
   userText:  string;
   mode?:     'chat' | 'speak';
   output?:   'audio' | 'video';
+  /** Lipsync provider for video turns. `elevenlabs` renders masky audio-only
+   *  (fast + cheap) and stamps the doc for client-side ElevenLabs lipsync. */
+  lipsync?:  'masky' | 'elevenlabs';
 }): Promise<void> {
   const { guildId, channelId, avatar } = opts;
   const botUid = await upsertBotUser(botUidForAvatar(guildId, avatar.avatarId), avatar, guildId);
@@ -1133,13 +1143,16 @@ async function respondAsAvatar(opts: {
   //    the client watches the public liveTurns mirror and plays each chunk's
   //    video as it renders (~30–60s/chunk). We don't tie up the function. ──
   if (opts.output === 'video') {
-    const posted = await postTurn({ conversation, apiKey: opts.apiKey, userText: opts.userText, mode: opts.mode, output: 'video' });
+    // With the ElevenLabs provider masky only renders the AUDIO chunks; the
+    // claiming client lipsyncs them into video (see useElevenRenderer).
+    const eleven = opts.lipsync === 'elevenlabs';
+    const posted = await postTurn({ conversation, apiKey: opts.apiKey, userText: opts.userText, mode: opts.mode, output: eleven ? 'audio' : 'video' });
     if (!posted) {
       await destRef.delete().catch(() => {});
       return;
     }
     await destRef.update({
-      maskyOutput:       'video',
+      maskyOutput:       eleven ? 'eleven-video' : 'video',
       maskyViewerToken:  avatar.viewerToken,
       maskyAnchorTurnId: posted.turnId,
       // text + streaming are resolved client-side from the mirror.
@@ -1402,7 +1415,7 @@ export const onClaudeTranscriptUtterance = onDocumentCreated(
       c: { avatar: ChannelAvatar; key: string; text: string; audioUrls: string[] },
     ) => {
       if (wantVideo) {
-        await respondAsAvatar({ guildId, channelId, apiKey: c.key, avatar: c.avatar, userText: c.text, mode: 'speak', output: 'video' });
+        await respondAsAvatar({ guildId, channelId, apiKey: c.key, avatar: c.avatar, userText: c.text, mode: 'speak', output: 'video', lipsync: guild.elevenLipsync ? 'elevenlabs' : 'masky' });
       } else {
         await writeReplyDoc(guildId, channelId, c.avatar, c.text, c.audioUrls);
       }
@@ -1450,6 +1463,7 @@ export const onClaudeTranscriptUtterance = onDocumentCreated(
           await respondAsAvatar({
             guildId, channelId, apiKey: winner.key, avatar: winner.avatar,
             userText: finalText, mode: 'speak', output: wantVideo ? 'video' : 'audio',
+            lipsync: guild.elevenLipsync ? 'elevenlabs' : 'masky',
           });
           revoiced = true;
         }
@@ -1573,6 +1587,7 @@ export const agentSpeak = onRequest(
       userText: text,
       mode:     'speak',
       output:   body.output === 'video' ? 'video' : 'audio',
+      lipsync:  guild?.elevenLipsync ? 'elevenlabs' : 'masky',
     });
     res.json({ ok: true, action: 'speak' });
   },

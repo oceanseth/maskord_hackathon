@@ -11,6 +11,7 @@
 import type * as agent from "../agent.js";
 import type * as cast from "../cast.js";
 import type * as debate from "../debate.js";
+import type * as elevenLipsync from "../elevenLipsync.js";
 import type * as files from "../files.js";
 import type * as guillotine from "../guillotine.js";
 import type * as marrymatemurder from "../marrymatemurder.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   agent: typeof agent;
   cast: typeof cast;
   debate: typeof debate;
+  elevenLipsync: typeof elevenLipsync;
   files: typeof files;
   guillotine: typeof guillotine;
   marrymatemurder: typeof marrymatemurder;

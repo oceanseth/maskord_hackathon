@@ -227,6 +227,34 @@ export default defineSchema({
     .index('by_room_round', ['roomId', 'round'])
     .index('by_room_round_voter', ['roomId', 'round', 'voterKey']),
 
+  // ElevenLabs lipsync render jobs (convex/elevenLipsync.ts). When a guild's
+  // lipsync provider is `elevenlabs`, each talking-head avatar turn is rendered
+  // by exactly ONE connected client ("the server host machine"): it claims the
+  // job, lipsyncs each masky audio chunk through the guild's ElevenLabs key,
+  // uploads the mp4s to Convex storage, and every client plays the clips from
+  // here. One row per transcript utterance.
+  elevenJobs: defineTable({
+    /** `${guildId}:${channelId}:${utteranceId}` — the transcript doc the clips belong to. */
+    key: v.string(),
+    /** Renderer session id that holds the claim. */
+    claimedBy: v.string(),
+    /** Claim heartbeat — a stale (crashed) renderer can be taken over. */
+    updatedAt: v.number(),
+    /** Rendered chunks, kept sorted by idx (the masky chunk order). */
+    clips: v.array(
+      v.object({
+        idx: v.number(),
+        storageId: v.id('_storage'),
+        /** The chunk's spoken text, mirrored for captions. */
+        text: v.optional(v.string()),
+      }),
+    ),
+    /** Total renderable chunks, known once the masky run settles. */
+    total: v.optional(v.number()),
+    /** True once every chunk has rendered (or permanently failed). */
+    done: v.boolean(),
+  }).index('by_key', ['key']),
+
   // Points for voting with the majority, accumulated across rounds.
   stagePoints: defineTable({
     roomId: v.id('rooms'),

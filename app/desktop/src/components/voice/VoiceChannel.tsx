@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useMemo } from 'react';
 import { useAuth, useUserProfiles, createInvite, useGuild, useGuildChannels, DEFAULT_CLAUDE_AVATAR } from '@maskord/shared';
 import type { ShareKind } from '@maskord/shared';
 import { useTalkingHead } from '../../hooks/useTalkingHead';
+import { useElevenRenderer } from '../../hooks/useElevenRenderer';
 import { useVoiceCtx } from './VoiceProvider';
 import type { VoiceSettings, AudioDevice } from '../../hooks/useVoiceSettings';
 import Modal from '../ui/Modal';
@@ -135,6 +136,15 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
   // avatar reply renders a video; we play it inside the speaking avatar's tile).
   const { videoSpeakingId, videoSrc, handleVideoEnded, textByUtterance } =
     useTalkingHead(transcriptOn ? guildId : null, transcriptOn ? channelId : null);
+
+  // ElevenLabs lipsync renderer — when the guild's lipsync provider is 11labs,
+  // one connected client (the server host's machine, by claim) renders each
+  // avatar turn's audio chunks into talking-head clips that everyone plays.
+  useElevenRenderer({
+    guildId, channelId, guild: guild ?? null,
+    uid: firebaseUser?.uid ?? null,
+    active: transcriptOn,
+  });
 
   // Stream local STT into the channel transcript while the user is connected
   // and AI assistance is on. Other peers see your utterances appear live.
