@@ -9,6 +9,7 @@ import type { RoomIdentity } from '../../rooms/useRoom';
 import DebateChannel from '../../rooms/debate/DebateChannel';
 import DndChannel from '../../rooms/wizard/DndChannel';
 import GuillotineChannel from '../../rooms/guillotine/GuillotineChannel';
+import MarryMateMurderChannel from '../../rooms/marrymatemurder/MarryMateMurderChannel';
 
 /**
  * What a game board is handed when a channel is in one of the game modes.
@@ -71,9 +72,7 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
     ) : mode === 'guillotine' ? (
       <GuillotineChannel guildId={guildId} channelId={channelId} />
     ) : mode === 'marrymatemurder' ? (
-      // rooms/marrymatemurder/ replaces this placeholder with its board,
-      // keeping the TwitchIngestSync mount below intact.
-      <StagePending mode={mode} />
+      <MarryMateMurderChannel guildId={guildId} channelId={channelId} />
     ) : null;
 
   if (board) {
@@ -143,20 +142,6 @@ function TwitchIngestSync({
   }, [configure, mode, channelId, guildId, title, twitchChannel, enabled]);
 
   return null;
-}
-
-function StagePending({ mode }: { mode: string }) {
-  return (
-    <Centered>
-      <p className="text-sm font-semibold text-white">
-        {mode === 'guillotine' ? 'The guillotine is being built' : 'The stage is being built'}
-      </p>
-      <p className="text-xs text-[#6b7280]">
-        This channel is ready for <code className="text-violet-300">{mode}</code>; the board
-        lands with the stage engine.
-      </p>
-    </Centered>
-  );
 }
 
 function Centered({ children }: { children: React.ReactNode }) {
