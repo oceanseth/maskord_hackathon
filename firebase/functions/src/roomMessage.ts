@@ -67,12 +67,13 @@ export const roomMessage = onRequest(
     }
 
     // Allowlist first, exactly as in roomTurn: a room's channel binding comes
-    // from a client, so it is a request rather than a permission.
+    // from a client, so it is a request rather than a permission. `*` delegates
+    // the decision to each server owner, same as roomTurn.
     const allowed = (bridgeGuilds.value() ?? '')
       .split(',')
       .map((g) => g.trim())
       .filter(Boolean);
-    if (!allowed.includes(guildId)) {
+    if (!allowed.includes('*') && !allowed.includes(guildId)) {
       res.status(403).json({ error: 'guild-not-allowed' });
       return;
     }
