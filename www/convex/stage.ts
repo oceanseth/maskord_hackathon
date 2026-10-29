@@ -55,6 +55,13 @@ export type StageEntrant = {
   color?: string;
   /** Written by the mode: the game, the stakes, that the audience votes next. */
   system: string;
+  /**
+   * When set and the seat has a /live conversation, the line comes from the
+   * avatar itself: this prompt goes in as a chat turn and masky's reasoning
+   * (the avatar's own personality) writes and voices the reply. `system` +
+   * the deployment model stays as the fallback when that path fails.
+   */
+  chatPrompt?: string;
   /** Said instead when no model is reachable or the call fails. */
   fallbackLine?: string;
   /** Browser TTS reads pitch/rate when this seat has no Masky conversation. */
@@ -431,6 +438,30 @@ async function postLiveTurn(
   return data?.posted === true;
 }
 
+/**
+ * Inject the game context as a chat turn: masky.ai's own reasoning — the
+ * avatar's personality plus this conversation's history — writes the line and
+ * voices it. Returns the avatar's reply text, or null when the bridge, the
+ * model, or the render pipeline fails (the caller falls back to `callModel`).
+ */
+async function postLiveChat(
+  guildId: string,
+  memberUid: string,
+  conversationId: string,
+  prompt: string,
+): Promise<string | null> {
+  const data = await stageBridge('stage-speak', {
+    guildId,
+    memberUid,
+    conversationId,
+    text: prompt,
+    mode: 'chat',
+    wait: true,
+  });
+  const text = typeof data?.text === 'string' ? data.text.replace(/\s+/g, ' ').trim() : '';
+  return data?.posted === true && text ? text : null;
+}
+
 const liveValidator = v.object({
   conversationId: v.string(),
   liveUrl: v.string(),
@@ -636,7 +667,23 @@ export const speak = internalAction({
       .join('\n');
 
     let text = '';
-    if (hasInference(snap.guildId)) {
+    let voiced: 'live' | 'local' = 'local';
+
+    // A seated Masky mask reasons as itself: the game context goes in as a
+    // chat turn and the avatar's own reply is both the line and the voice.
+    if (entrant.chatPrompt && entrant.live && snap.guildId && snap.startedBy) {
+      const prompt =
+        `Round ${stage.round}. ` +
+        (said ? `Already said this round:\n${said}\n\n` : 'You speak first. ') +
+        entrant.chatPrompt;
+      const reply = await postLiveChat(snap.guildId, snap.startedBy, entrant.live.conversationId, prompt);
+      if (reply) {
+        text = reply;
+        voiced = 'live';
+      }
+    }
+
+    if (!text && hasInference(snap.guildId)) {
       try {
         const reply = await callModel({
           system: entrant.system,
@@ -661,8 +708,9 @@ export const speak = internalAction({
     }
     if (!text) text = entrant.fallbackLine ?? `I'm ${entrant.name}, and I would very much like to keep my head.`;
 
-    let voiced: 'live' | 'local' = 'local';
-    if (entrant.live && snap.guildId && snap.startedBy) {
+    // The chat path already voiced its reply; anything else written here still
+    // needs a speak turn posted onto the seat's live face.
+    if (voiced === 'local' && entrant.live && snap.guildId && snap.startedBy) {
       const posted = await postLiveTurn(snap.guildId, snap.startedBy, entrant.live.conversationId, text, true);
       if (posted) voiced = 'live';
     }
@@ -1096,7 +1144,9 @@ export const state = query({
 
     // System prompts are the mode's business, not the audience's. The opening
     // line and the claim are the clock's, not the board's.
-    const entrants = stage.entrants.map(({ system: _system, fallbackLine: _f, ...rest }) => rest);
+    const entrants = stage.entrants.map(
+      ({ system: _system, chatPrompt: _chat, fallbackLine: _f, ...rest }) => rest,
+    );
     const { pending: _pending, openingLine: _opening, claimedUntil: _claimed, ...board } = stage;
 
     return {
