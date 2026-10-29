@@ -21,6 +21,7 @@ import { useAppStore } from '../../store/app';
 import { ChannelFeed } from '../ChannelFeed';
 import { StatusPill } from '../RoomPanel';
 import { useRoom } from '../useRoom';
+import { SideShelf } from '../SideShelf';
 import { Stage, StageLeaderboard, useStage, type VerbStyle } from '../stage/Stage';
 
 /**
@@ -154,7 +155,7 @@ export default function MarryMateMurderChannel({ guildId, channelId }: Props) {
         {round > 0 && <span className="ml-auto text-xs text-[#8b8fa3]">Round {round}</span>}
       </div>
 
-      <div className="flex-1 flex min-h-0">
+      <div className="relative flex min-h-0 flex-1">
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           <Stage
             data={stage.data}
@@ -188,7 +189,7 @@ export default function MarryMateMurderChannel({ guildId, channelId }: Props) {
           )}
         </div>
 
-        <aside className="w-72 shrink-0 border-l border-[#1f1f2e] flex flex-col min-h-0 bg-[#0c0c14] p-3 gap-3 overflow-y-auto scrollable">
+        <SideShelf label="Score" bodyClassName="gap-3 p-3">
           <p className="text-xs text-[#8b8fa3]">
             Three masks this server owns. One line each, then every voter assigns marry, mate, and murder —
             one of each. A point for each verb that matches the room. The show ends when the vote is revealed.
@@ -305,7 +306,7 @@ export default function MarryMateMurderChannel({ guildId, channelId }: Props) {
           )}
 
           <StageLeaderboard data={stage.data} meKey={voter?.key} />
-        </aside>
+        </SideShelf>
       </div>
     </div>
   );

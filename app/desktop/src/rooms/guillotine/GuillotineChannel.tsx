@@ -9,6 +9,7 @@ import { useAppStore } from '../../store/app';
 import { StatusPill } from '../RoomPanel';
 import { ChannelFeed } from '../ChannelFeed';
 import { useRoom, type RoomIdentity } from '../useRoom';
+import { SideShelf } from '../SideShelf';
 import { Stage, StageLeaderboard, useStage, type VerbStyle } from '../stage/Stage';
 
 /**
@@ -119,7 +120,7 @@ export default function GuillotineChannel({ guildId, channelId }: Props) {
         <StatusPill status={status} />
       </div>
 
-      <div className="flex-1 flex min-h-0">
+      <div className="relative flex min-h-0 flex-1">
         <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           {game?.champion && (
             <div className="px-4 py-2 text-center text-sm font-semibold bg-amber-900/30 border-b border-amber-700/40 text-amber-200">
@@ -158,7 +159,7 @@ export default function GuillotineChannel({ guildId, channelId }: Props) {
           )}
         </div>
 
-        <aside className="w-72 shrink-0 border-l border-[#1f1f2e] flex flex-col min-h-0 bg-[#0c0c14] p-3 gap-4 overflow-y-auto scrollable">
+        <SideShelf label="Bracket" bodyClassName="gap-4 p-3">
           {(!game?.started || game.champion) && (
             <div className="space-y-2">
               <p className="text-xs text-[#8b8fa3]">
@@ -250,7 +251,7 @@ export default function GuillotineChannel({ guildId, channelId }: Props) {
               ))}
             </div>
           )}
-        </aside>
+        </SideShelf>
       </div>
     </div>
   );
