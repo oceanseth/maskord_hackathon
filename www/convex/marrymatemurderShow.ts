@@ -62,6 +62,22 @@ export function defenseSystem(name: string, persona: string, rivals: string[]): 
   ].join('\n');
 }
 
+/**
+ * The chat-turn prompt for a seated Masky mask. No persona here on purpose:
+ * this goes into the mask's own /live conversation, where masky.ai's reasoning
+ * already has the avatar's personality — the prompt only sets the stage.
+ */
+export function defenseChat(rivals: string[]): string {
+  const against = rivals.length ? rivals.join(' and ') : 'two other contestants';
+  return [
+    `You're on stage with ${against} in MARRY, MATE, MURDER, a live game show hosted by Masky.`,
+    `The audience — the people in this room and viewers in Twitch chat — is about to vote to marry, mate, or murder each of you: one verb each, to three different contestants.`,
+    `You want to be married; being murdered is the worst result.`,
+    `You get exactly one spoken line to win them over before the vote. What would you like to tell the audience?`,
+    `Answer with just that one line, spoken aloud, under 45 words, as yourself — no stage directions, no emoji, no hashtags.`,
+  ].join(' ');
+}
+
 export function fallbackLine(name: string): string {
   return `Marry ${name}. The other two are a story you tell once and never call back.`;
 }

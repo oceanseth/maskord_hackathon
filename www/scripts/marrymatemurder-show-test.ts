@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   LABELS,
+  defenseChat,
   defenseSystem,
   fallbackLine,
   hostLine,
@@ -36,6 +37,16 @@ assert.match(system, /On stage with you: Bee and Cee/);
 assert.match(system, /says everything twice/);
 assert.match(defenseSystem('Ada', '   ', []), /something to prove/);
 assert.match(fallbackLine('Ada'), /Marry Ada/);
+
+// The chat prompt sets the stage but never carries a persona — the mask's own
+// masky.ai personality is the one that reasons.
+const chat = defenseChat(['Bee', 'Cee']);
+assert.match(chat, /on stage with Bee and Cee/);
+assert.match(chat, /MARRY, MATE, MURDER/);
+assert.match(chat, /Twitch chat/);
+assert.match(chat, /tell the audience/);
+assert.doesNotMatch(chat, /Who you are/);
+assert.match(defenseChat([]), /two other contestants/);
 
 const opening = hostLine(2, [
   { label: 'A', name: 'Ada' },

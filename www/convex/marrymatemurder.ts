@@ -9,6 +9,7 @@ import {
   LABELS,
   MODE,
   VERBS,
+  defenseChat,
   defenseSystem,
   fallbackLine,
   hostLine,
@@ -233,6 +234,10 @@ export const start = mutation({
       system: defenseSystem(
         slot.name,
         slot.persona,
+        slots.filter((other) => other.label !== slot.label).map((other) => other.name),
+      ),
+      // The mask's own /live conversation reasons the line; `system` is the fallback.
+      chatPrompt: defenseChat(
         slots.filter((other) => other.label !== slot.label).map((other) => other.name),
       ),
       fallbackLine: fallbackLine(slot.name),
