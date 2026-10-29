@@ -2,6 +2,7 @@ import { v } from 'convex/values';
 import { internalMutation, internalQuery, mutation } from './_generated/server';
 import { internal } from './_generated/api';
 import { appendEvent, ensureRoom, getRoomBySlug, roomKind } from './rooms';
+import { recordVote } from './stage';
 
 /**
  * The Twitch half of a stage game ("Ingest Twitch Chat" in channel settings).
@@ -143,10 +144,13 @@ export const alive = internalMutation({
 /**
  * One Twitch chat line lands in the room.
  *
- * A vote command becomes an `action` event with `data.kind = 'stageVote'` —
- * the seam the stage engine (convex/stage.ts) tallies from, keyed by
- * `voterKey: 'twitch:<userId>'` so a Twitch voter earns majority points under
- * the same key every round. Anything else becomes a `say` event, which
+ * A vote command goes straight into the stage engine's tally (`recordVote` in
+ * convex/stage.ts), keyed by `voterKey: 'twitch:<userId>'` so a Twitch voter
+ * earns majority points under the same key every round — and under the same
+ * uid Maskord mints if they later sign in with Twitch and vote from the
+ * buttons. Vote commands never reach the feed: the live percentages are their
+ * echo, and a vote outside the voting window is dropped where a mirrored
+ * "!execute A" would just be spam. Anything else becomes a `say` event, which
  * `appendEvent` mirrors into the bound channel; the bridge function creates a
  * `twitch:<userId>` account for the author if one does not exist yet.
  */
@@ -172,20 +176,7 @@ export const ingest = internalMutation({
 
     const vote = VOTE.exec(body);
     if (vote) {
-      await appendEvent(ctx, room._id, {
-        type: 'action',
-        actorKey: voterKey,
-        actorName: voterName,
-        body,
-        data: {
-          kind: 'stageVote',
-          verb: vote[1].toLowerCase(),
-          label: vote[2].toUpperCase(),
-          voterKey,
-          voterName,
-          source: 'twitch',
-        },
-      });
+      await recordVote(ctx, { slug, voterKey, voterName, label: vote[2], verb: vote[1] });
       return;
     }
 
