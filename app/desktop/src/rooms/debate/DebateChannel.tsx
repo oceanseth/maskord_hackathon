@@ -43,8 +43,11 @@ export default function DebateChannel({ guildId, channelId }: Props) {
   const channels = useGuildChannels(guildId);
   const channel = channels.find((c: Channel) => c.id === channelId);
   const channelName = channel?.name ?? '';
-  /** A voice channel shows every participant as a tile already; one roster is enough. */
-  const showRoster = channel?.type !== 'voice';
+  /**
+   * A voice channel shows every participant as a tile already; one roster is enough —
+   * but the seated masks never join the call, so they still need a strip of their own.
+   */
+  const isVoice = channel?.type === 'voice';
   const slug = debateChannelSlug(channelId);
 
   // Carried from creation, not from `start`: the bridge that spends the
@@ -125,7 +128,12 @@ export default function DebateChannel({ guildId, channelId }: Props) {
 
       <div className="flex-1 flex min-h-0">
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
-          {showRoster && <MemberStrip members={room.members} meKey={room.me?.memberKey} />}
+          {(!isVoice || room.members.some((m) => m.kind === 'mask')) && (
+            <MemberStrip
+              members={isVoice ? room.members.filter((m) => m.kind === 'mask') : room.members}
+              meKey={room.me?.memberKey}
+            />
+          )}
           <ChannelFeed
             guildId={guildId}
             channelId={channelId}

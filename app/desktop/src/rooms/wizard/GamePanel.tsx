@@ -1,5 +1,5 @@
 import { useMemo, useState, type ReactNode } from 'react';
-import { PREGENS } from '../../../../../www/convex/wizard/pregens';
+import { PREGENS, SHEET_KEYS } from '../../../../../www/convex/wizard/pregens';
 import { SPELLS } from '../../../../../www/convex/wizard/scenario';
 import { reachable } from '../../../../../www/convex/wizard/engine';
 import { feet, type Position } from '../../../../../www/convex/wizard/types';
@@ -36,6 +36,7 @@ export function GamePanel({ room, wiz }: { room: RoomHandle; wiz: WizardHandle }
     p.then(() => { setMode('idle'); setPick(null); }).catch((e) => setError((e as Error).message.replace(/^.*Uncaught Error: /, '').split('\n')[0]));
   };
   const act = (a: WizardAction) => run(wiz.act(a));
+  const freeSheets = SHEET_KEYS.filter((k) => !wiz.seats[k]);
   const enemies = wiz.creatures.filter((c) => !c.conditions.includes('dead'));
   const allies = wiz.characters.filter((c) => c !== me);
 
@@ -167,6 +168,21 @@ export function GamePanel({ room, wiz }: { room: RoomHandle; wiz: WizardHandle }
             ))}
             <Btn onClick={() => run(wiz.shortRest())}>Short rest</Btn>
             <Btn onClick={() => run(wiz.endSession())}>End the session</Btn>
+          </div>
+          {error && <div className="text-[11px] text-red-300">{error}</div>}
+        </div>
+      )}
+      {/* Arriving mid-game: the lobby's sheet picker is gone, but `chooseSeat`
+          seats a late human straight onto the beach, so offer the free sheets here. */}
+      {!wiz.mySeatKey && room.me?.kind === 'human' && freeSheets.length > 0 && wiz.phase !== 'defeat' && (
+        <div className="px-2 pb-2 space-y-1">
+          <div className="text-[11px] text-[#8b8fa3]">You're watching. Take a free sheet to join the party:</div>
+          <div className="flex flex-wrap gap-1">
+            {freeSheets.map((k) => (
+              <Btn key={k} accent onClick={() => run(wiz.chooseSeat(k))}>
+                {PREGENS[k].race} {PREGENS[k].className}
+              </Btn>
+            ))}
           </div>
           {error && <div className="text-[11px] text-red-300">{error}</div>}
         </div>
