@@ -13,6 +13,7 @@ import type * as cast from "../cast.js";
 import type * as debate from "../debate.js";
 import type * as files from "../files.js";
 import type * as guillotine from "../guillotine.js";
+import type * as marrymatemurder from "../marrymatemurder.js";
 import type * as messages from "../messages.js";
 import type * as nebius from "../nebius.js";
 import type * as presence from "../presence.js";
@@ -45,6 +46,7 @@ declare const fullApi: ApiFromModules<{
   debate: typeof debate;
   files: typeof files;
   guillotine: typeof guillotine;
+  marrymatemurder: typeof marrymatemurder;
   messages: typeof messages;
   nebius: typeof nebius;
   presence: typeof presence;
