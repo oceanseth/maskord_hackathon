@@ -11,7 +11,7 @@ import type { MutationCtx, QueryCtx } from './_generated/server';
 import { internal } from './_generated/api';
 import type { Doc, Id } from './_generated/dataModel';
 import { appendEvent, getRoomBySlug } from './rooms';
-import { callModel, hasInference } from './agent';
+import { callModel, hasBridge, hasInference } from './agent';
 
 /**
  * The stage: the shared floor that the vote-the-cast game modes play on —
@@ -57,8 +57,19 @@ export type StageEntrant = {
   system: string;
   /** Said instead when no model is reachable or the call fails. */
   fallbackLine?: string;
-  /** Passed through to the board's voice; browser TTS reads pitch/rate. */
+  /** Browser TTS reads pitch/rate when this seat has no Masky conversation. */
   voice?: { pitch?: number; rate?: number; avatarGroupId?: string; ownerUid?: string };
+  /**
+   * The mask's masky.ai /live conversation. The board embeds `liveUrl`; silent
+   * waiting clips move the face between lines, and speak turns play on it.
+   */
+  live?: StageLive;
+};
+
+/** A masky.ai conversation the stage is adding turns to. `liveUrl` is the embed. */
+export type StageLive = {
+  conversationId: string;
+  liveUrl: string;
 };
 
 export type StageLine = {
@@ -72,6 +83,12 @@ export type StageLine = {
   durationMs: number;
   /** Bumps per line so a board can tell a new line from a re-render. */
   seq: number;
+  /**
+   * `live` — a speak turn was posted to the mask's /live conversation, so the
+   * board must not also speak it with the browser voice.
+   * `local` — browser speech synthesis.
+   */
+  voiced?: 'live' | 'local';
 };
 
 export type StageReveal = {
@@ -91,6 +108,8 @@ export type StageReveal = {
 export type StagePhase = 'idle' | 'speeches' | 'voting' | 'revealed' | 'over';
 
 type Pending =
+  | { kind: 'prepare' }
+  | { kind: 'host' }
   | { kind: 'speak'; index: number }
   | { kind: 'openVoting' }
   | { kind: 'closeVoting' };
@@ -118,6 +137,12 @@ export type StageState = {
   deadline?: number;
   /** Free text the mode wants shown on the stage ("Heat 4 · losers' bracket"). */
   caption?: string;
+  /** Host Masky's /live conversation, reused across rounds of this room. */
+  hostLive?: StageLive;
+  /** Said by the host once the live faces are up. Cleared as it is spoken. */
+  openingLine?: string;
+  /** While this is in the future, a second copy of the same voice job does nothing. */
+  claimedUntil?: number;
 };
 
 export const DEFAULT_VOTE_MS = 30_000;
@@ -126,6 +151,17 @@ const LINE_MAX_WORDS = 60;
 const TICK_GRACE_MS = 8_000;
 /** A model call that has not come back by now is treated as lost. */
 const SPEAK_DEADLINE_MS = 30_000;
+/** Creating the /live conversations. A few HTTP calls, no video render. */
+const PREPARE_DEADLINE_MS = 40_000;
+/**
+ * A speak turn's talking-head video. The bridge waits ~70s for the first
+ * chunks; the claim and the watchdog deadline sit past that so a slow render
+ * is not posted a second time.
+ */
+const VOICE_DEADLINE_MS = 200_000;
+const CLAIM_MS = 170_000;
+/** Let open boards mount the live iframe before the first turn is posted. */
+const IFRAME_LEAD_MS = 6_000;
 /** A beat between one speaker finishing and the next starting. */
 const GAP_MS = 900;
 
@@ -195,14 +231,15 @@ export async function openRound(
   const step = prev.step + 1;
   const now = Date.now();
 
-  let stage: StageState = {
+  const stage: StageState = {
     ...prev,
     phase: 'speeches',
     round,
     step,
     verbs: opts.verbs,
     exclusive: Boolean(opts.exclusive),
-    entrants: opts.entrants,
+    entrants: withCarriedLives(prev.entrants, opts.entrants),
+    hostLive: prev.hostLive,
     line: undefined,
     lines: [],
     voteMs: opts.voteMs ?? DEFAULT_VOTE_MS,
@@ -210,28 +247,42 @@ export async function openRound(
     reveal: undefined,
     onReveal: opts.onReveal,
     caption: opts.caption,
-    pending: { kind: 'speak', index: 0 },
+    openingLine: opts.hostLine,
+    claimedUntil: undefined,
+    pending: { kind: 'prepare' },
+    deadline: now + PREPARE_DEADLINE_MS,
   };
 
-  let firstAt = 600;
-  if (opts.hostLine) {
-    stage = await sayAsHost(ctx, roomId, stage, opts.hostLine);
-    firstAt = (stage.line?.durationMs ?? 0) + GAP_MS;
-  }
-  stage.deadline = now + firstAt + SPEAK_DEADLINE_MS;
   await writeStage(ctx, roomId, stage);
-  await ctx.scheduler.runAfter(firstAt, internal.stage.speak, { roomId, step, index: 0 });
+  // Faces first (silent waiting clips), then Masky's opening line, then entrants.
+  await ctx.scheduler.runAfter(0, internal.stage.prepare, { roomId, step });
   return round;
+}
+
+/** Keep a mask's /live conversation when the same avatar stands again. */
+function withCarriedLives(prev: StageEntrant[], next: StageEntrant[]): StageEntrant[] {
+  return next.map((entrant) => {
+    const id = entrant.voice?.avatarGroupId;
+    if (!id) return entrant;
+    const prior = prev.find((p) => p.voice?.avatarGroupId === id && p.live);
+    return prior?.live ? { ...entrant, live: prior.live } : entrant;
+  });
 }
 
 /**
  * Masky says something on stage — spoken by the boards, posted to the log —
  * without moving the round. Modes use it for their reveal commentary.
+ * When the host has a /live conversation, the line is a speak turn on it.
  */
 export async function hostSay(ctx: MutationCtx, roomId: Id<'rooms'>, text: string) {
   const room = await ctx.db.get(roomId);
   if (!room) return;
-  await writeStage(ctx, roomId, await sayAsHost(ctx, roomId, stageOf(room), text));
+  const stage = stageOf(room);
+  const voiced = stage.hostLive ? 'live' : 'local';
+  await writeStage(ctx, roomId, await sayAsHost(ctx, roomId, stage, text, voiced));
+  if (voiced === 'live') {
+    await ctx.scheduler.runAfter(0, internal.stage.postHostTurn, { roomId, text });
+  }
 }
 
 async function sayAsHost(
@@ -239,6 +290,7 @@ async function sayAsHost(
   roomId: Id<'rooms'>,
   stage: StageState,
   text: string,
+  voiced: 'live' | 'local' = 'local',
 ): Promise<StageState> {
   const room = await ctx.db.get(roomId);
   const hostName = room?.hostName ?? 'Masky';
@@ -257,6 +309,7 @@ async function sayAsHost(
     startedAt: Date.now(),
     durationMs: speakingMs(text),
     seq: stage.lineSeq + 1,
+    voiced,
   };
   return { ...stage, line, lines: [...stage.lines, line], lineSeq: line.seq };
 }
@@ -317,6 +370,249 @@ export const stageFor = internalQuery({
   },
 });
 
+type LiveRef = { conversationId: string; liveUrl: string };
+
+/**
+ * Ask the room bridge to create or reuse a /live conversation, or to post a
+ * speak turn onto one. The mky_ key stays in Firebase. Returns null when the
+ * bridge is down or the server has no Masky key — the line still happens,
+ * spoken by the browser.
+ */
+async function stageBridge(
+  op: 'stage-ensure' | 'stage-speak',
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  if (!hasBridge()) return null;
+  try {
+    const res = await fetch(process.env.ROOM_BRIDGE_URL as string, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-room-bridge-secret': process.env.ROOM_BRIDGE_SECRET as string,
+      },
+      body: JSON.stringify({ op, ...body }),
+    });
+    if (!res.ok) {
+      console.error('stage.live', op, res.status);
+      return null;
+    }
+    return (await res.json()) as Record<string, unknown>;
+  } catch (err) {
+    console.error('stage.live', op, (err as Error).message);
+    return null;
+  }
+}
+
+async function ensureLive(
+  guildId: string,
+  memberUid: string,
+  avatar?: { avatarId: string; avatarOwnerUserId: string },
+): Promise<LiveRef | null> {
+  const data = await stageBridge('stage-ensure', {
+    guildId,
+    memberUid,
+    ...(avatar ?? {}),
+  });
+  const conversationId = data?.conversationId;
+  const liveUrl = data?.liveUrl;
+  if (typeof conversationId !== 'string' || typeof liveUrl !== 'string' || !liveUrl) return null;
+  return { conversationId, liveUrl };
+}
+
+/** Post the line and wait (inside the bridge) until its video is ready to play. */
+async function postLiveTurn(
+  guildId: string,
+  memberUid: string,
+  conversationId: string,
+  text: string,
+  wait: boolean,
+): Promise<boolean> {
+  const data = await stageBridge('stage-speak', { guildId, memberUid, conversationId, text, wait });
+  return data?.posted === true;
+}
+
+const liveValidator = v.object({
+  conversationId: v.string(),
+  liveUrl: v.string(),
+});
+
+/**
+ * Open a /live conversation for the host and for every seated mask that has a
+ * Masky avatar, turn silent waiting clips on, then start the opening line.
+ */
+export const prepare = internalAction({
+  args: { roomId: v.id('rooms'), step: v.number() },
+  handler: async (ctx, { roomId, step }) => {
+    const snap = await ctx.runQuery(internal.stage.stageFor, { roomId });
+    if (!snap || snap.status !== 'running') return;
+    const { stage } = snap;
+    if (stage.step !== step || stage.phase !== 'speeches' || stage.pending?.kind !== 'prepare') return;
+
+    let hostLive: LiveRef | null = stage.hostLive ?? null;
+    const entrantLives: Array<{ label: string } & LiveRef> = [];
+    if (snap.guildId && snap.startedBy) {
+      hostLive = (await ensureLive(snap.guildId, snap.startedBy)) ?? hostLive;
+      for (const entrant of stage.entrants) {
+        const avatarId = entrant.voice?.avatarGroupId;
+        const avatarOwnerUserId = entrant.voice?.ownerUid;
+        if (!avatarId || !avatarOwnerUserId) continue;
+        if (entrant.live) {
+          entrantLives.push({ label: entrant.label, ...entrant.live });
+          continue;
+        }
+        const live = await ensureLive(snap.guildId, snap.startedBy, { avatarId, avatarOwnerUserId });
+        if (live) entrantLives.push({ label: entrant.label, ...live });
+      }
+    }
+
+    await ctx.runMutation(internal.stage.voicesReady, {
+      roomId,
+      step,
+      hostLive,
+      entrantLives,
+    });
+  },
+});
+
+export const voicesReady = internalMutation({
+  args: {
+    roomId: v.id('rooms'),
+    step: v.number(),
+    hostLive: v.union(liveValidator, v.null()),
+    entrantLives: v.array(v.object({ label: v.string(), conversationId: v.string(), liveUrl: v.string() })),
+  },
+  handler: async (ctx, { roomId, step, hostLive, entrantLives }) => {
+    const room = await ctx.db.get(roomId);
+    if (!room || room.status !== 'running') return;
+    const stage = stageOf(room);
+    if (stage.step !== step || stage.phase !== 'speeches' || stage.pending?.kind !== 'prepare') return;
+
+    const byLabel = new Map(entrantLives.map((row) => [row.label, row]));
+    const entrants = stage.entrants.map((entrant) => {
+      const row = byLabel.get(entrant.label);
+      return row ? { ...entrant, live: { conversationId: row.conversationId, liveUrl: row.liveUrl } } : entrant;
+    });
+    const nextHost = hostLive ?? stage.hostLive;
+    const hasFace = Boolean(nextHost) || entrants.some((entrant) => entrant.live);
+    const lead = hasFace ? IFRAME_LEAD_MS : 0;
+    const base: StageState = {
+      ...stage,
+      entrants,
+      ...(nextHost ? { hostLive: nextHost } : {}),
+      claimedUntil: undefined,
+    };
+
+    if (stage.openingLine) {
+      await writeStage(ctx, roomId, {
+        ...base,
+        pending: { kind: 'host' },
+        deadline: Date.now() + lead + VOICE_DEADLINE_MS,
+      });
+      await ctx.scheduler.runAfter(lead, internal.stage.voiceHost, { roomId, step });
+      return;
+    }
+
+    await writeStage(ctx, roomId, {
+      ...base,
+      openingLine: undefined,
+      pending: { kind: 'speak', index: 0 },
+      deadline: Date.now() + lead + (entrants[0]?.live ? VOICE_DEADLINE_MS : SPEAK_DEADLINE_MS),
+    });
+    await ctx.scheduler.runAfter(lead, internal.stage.speak, { roomId, step, index: 0 });
+  },
+});
+
+/**
+ * One in-flight voice job per step. A watchdog retry that arrives while the
+ * first is still rendering video does not post the line again.
+ */
+export const claimTurn = internalMutation({
+  args: {
+    roomId: v.id('rooms'),
+    step: v.number(),
+    kind: v.union(v.literal('host'), v.literal('speak')),
+    index: v.optional(v.number()),
+  },
+  handler: async (ctx, { roomId, step, kind, index }) => {
+    const room = await ctx.db.get(roomId);
+    if (!room || room.status !== 'running') return false;
+    const stage = stageOf(room);
+    if (stage.step !== step || stage.phase !== 'speeches' || !stage.pending) return false;
+    if (kind === 'speak') {
+      if (stage.pending.kind !== 'speak' || stage.pending.index !== index) return false;
+    } else if (stage.pending.kind !== 'host') {
+      return false;
+    }
+    if ((stage.claimedUntil ?? 0) > Date.now()) return false;
+    await writeStage(ctx, roomId, { ...stage, claimedUntil: Date.now() + CLAIM_MS });
+    return true;
+  },
+});
+
+/** Masky's opening line, as a speak turn on the host's /live conversation. */
+export const voiceHost = internalAction({
+  args: { roomId: v.id('rooms'), step: v.number() },
+  handler: async (ctx, { roomId, step }) => {
+    const snap = await ctx.runQuery(internal.stage.stageFor, { roomId });
+    if (!snap || snap.status !== 'running') return;
+    const text = snap.stage.openingLine;
+    if (!text || snap.stage.pending?.kind !== 'host') return;
+    const claimed = await ctx.runMutation(internal.stage.claimTurn, { roomId, step, kind: 'host' });
+    if (!claimed) return;
+
+    let voiced: 'live' | 'local' = 'local';
+    const live = snap.stage.hostLive;
+    if (live && snap.guildId && snap.startedBy) {
+      const posted = await postLiveTurn(snap.guildId, snap.startedBy, live.conversationId, text, true);
+      if (posted) voiced = 'live';
+    }
+    await ctx.runMutation(internal.stage.hostLineSpoken, { roomId, step, text, voiced });
+  },
+});
+
+export const hostLineSpoken = internalMutation({
+  args: {
+    roomId: v.id('rooms'),
+    step: v.number(),
+    text: v.string(),
+    voiced: v.union(v.literal('live'), v.literal('local')),
+  },
+  handler: async (ctx, { roomId, step, text, voiced }) => {
+    const room = await ctx.db.get(roomId);
+    if (!room || room.status !== 'running') return;
+    const stage = stageOf(room);
+    if (stage.step !== step || stage.phase !== 'speeches' || stage.pending?.kind !== 'host') return;
+
+    const withLine = await sayAsHost(ctx, roomId, stage, text, voiced);
+    const nextStep = step + 1;
+    const after = (withLine.line?.durationMs ?? 0) + GAP_MS;
+    const firstLive = Boolean(withLine.entrants[0]?.live);
+    await writeStage(ctx, roomId, {
+      ...withLine,
+      step: nextStep,
+      openingLine: undefined,
+      claimedUntil: undefined,
+      pending: { kind: 'speak', index: 0 },
+      deadline: Date.now() + after + (firstLive ? VOICE_DEADLINE_MS : SPEAK_DEADLINE_MS),
+    });
+    await ctx.scheduler.runAfter(after, internal.stage.speak, { roomId, step: nextStep, index: 0 });
+  },
+});
+
+/**
+ * Reveal commentary. The line is already on the board; this only adds the
+ * speak turn so the host's live face says it. It does not move the round.
+ */
+export const postHostTurn = internalAction({
+  args: { roomId: v.id('rooms'), text: v.string() },
+  handler: async (ctx, { roomId, text }) => {
+    const snap = await ctx.runQuery(internal.stage.stageFor, { roomId });
+    const live = snap?.stage.hostLive;
+    if (!snap?.guildId || !snap.startedBy || !live) return;
+    await postLiveTurn(snap.guildId, snap.startedBy, live.conversationId, text, false);
+  },
+});
+
 /**
  * One entrant's one line. An action because it calls the model; everything it
  * learns goes back through `lineSpoken`, which re-checks the step.
@@ -330,6 +626,8 @@ export const speak = internalAction({
     if (stage.step !== step || stage.phase !== 'speeches') return;
     const entrant = stage.entrants[index];
     if (!entrant) return;
+    const claimed = await ctx.runMutation(internal.stage.claimTurn, { roomId, step, kind: 'speak', index });
+    if (!claimed) return;
 
     const rivals = stage.entrants.filter((e) => e.label !== entrant.label).map((e) => e.name);
     const said = stage.lines
@@ -363,13 +661,25 @@ export const speak = internalAction({
     }
     if (!text) text = entrant.fallbackLine ?? `I'm ${entrant.name}, and I would very much like to keep my head.`;
 
-    await ctx.runMutation(internal.stage.lineSpoken, { roomId, step, index, text });
+    let voiced: 'live' | 'local' = 'local';
+    if (entrant.live && snap.guildId && snap.startedBy) {
+      const posted = await postLiveTurn(snap.guildId, snap.startedBy, entrant.live.conversationId, text, true);
+      if (posted) voiced = 'live';
+    }
+
+    await ctx.runMutation(internal.stage.lineSpoken, { roomId, step, index, text, voiced });
   },
 });
 
 export const lineSpoken = internalMutation({
-  args: { roomId: v.id('rooms'), step: v.number(), index: v.number(), text: v.string() },
-  handler: async (ctx, { roomId, step, index, text }) => {
+  args: {
+    roomId: v.id('rooms'),
+    step: v.number(),
+    index: v.number(),
+    text: v.string(),
+    voiced: v.optional(v.union(v.literal('live'), v.literal('local'))),
+  },
+  handler: async (ctx, { roomId, step, index, text, voiced }) => {
     const room = await ctx.db.get(roomId);
     if (!room) return;
     const stage = stageOf(room);
@@ -393,11 +703,13 @@ export const lineSpoken = internalMutation({
       startedAt: Date.now(),
       durationMs: speakingMs(text),
       seq: stage.lineSeq + 1,
+      voiced: voiced ?? 'local',
     };
     const nextStep = step + 1;
     const after = line.durationMs + GAP_MS;
     const last = index + 1 >= stage.entrants.length;
     const pending: Pending = last ? { kind: 'openVoting' } : { kind: 'speak', index: index + 1 };
+    const nextLive = !last && Boolean(stage.entrants[index + 1]?.live);
 
     await writeStage(ctx, roomId, {
       ...stage,
@@ -406,7 +718,8 @@ export const lineSpoken = internalMutation({
       lines: [...stage.lines, line],
       lineSeq: line.seq,
       pending,
-      deadline: Date.now() + after + (last ? 0 : SPEAK_DEADLINE_MS),
+      claimedUntil: undefined,
+      deadline: Date.now() + after + (last ? 0 : nextLive ? VOICE_DEADLINE_MS : SPEAK_DEADLINE_MS),
     });
 
     if (last) {
@@ -573,8 +886,20 @@ export async function resumeStage(ctx: MutationCtx, roomId: Id<'rooms'>, pausedA
     await ctx.scheduler.runAfter(endsAt - now, internal.stage.closeVoting, { roomId, step });
     return;
   }
-  await writeStage(ctx, roomId, { ...stage, step, deadline: now + SPEAK_DEADLINE_MS });
-  if (stage.pending.kind === 'speak') {
+  const voiceWait =
+    stage.pending.kind === 'host' ||
+    (stage.pending.kind === 'speak' && Boolean(stage.entrants[stage.pending.index]?.live));
+  await writeStage(ctx, roomId, {
+    ...stage,
+    step,
+    claimedUntil: undefined,
+    deadline: now + (voiceWait ? VOICE_DEADLINE_MS : SPEAK_DEADLINE_MS),
+  });
+  if (stage.pending.kind === 'prepare') {
+    await ctx.scheduler.runAfter(0, internal.stage.prepare, { roomId, step });
+  } else if (stage.pending.kind === 'host') {
+    await ctx.scheduler.runAfter(0, internal.stage.voiceHost, { roomId, step });
+  } else if (stage.pending.kind === 'speak') {
     await ctx.scheduler.runAfter(0, internal.stage.speak, { roomId, step, index: stage.pending.index });
   } else {
     await ctx.scheduler.runAfter(0, internal.stage.openVoting, { roomId, step });
@@ -597,9 +922,29 @@ export const tick = mutation({
     }
     const roomId = room._id;
     const step = stage.step;
+    // A render still inside its claim is not lost. Push the watchdog to the
+    // claim so a room full of tabs does not post the same line again.
+    if ((stage.claimedUntil ?? 0) > Date.now()) {
+      await writeStage(ctx, roomId, { ...stage, deadline: stage.claimedUntil });
+      return { fired: false };
+    }
+    const voiceJob =
+      stage.pending.kind === 'prepare' ||
+      stage.pending.kind === 'host' ||
+      (stage.pending.kind === 'speak' && Boolean(stage.entrants[stage.pending.index]?.live));
     // Push the deadline out so a room full of tabs fires this once, not once each.
-    await writeStage(ctx, roomId, { ...stage, deadline: Date.now() + SPEAK_DEADLINE_MS });
+    await writeStage(ctx, roomId, {
+      ...stage,
+      claimedUntil: undefined,
+      deadline: Date.now() + (voiceJob ? VOICE_DEADLINE_MS : SPEAK_DEADLINE_MS),
+    });
     switch (stage.pending.kind) {
+      case 'prepare':
+        await ctx.scheduler.runAfter(0, internal.stage.prepare, { roomId, step });
+        break;
+      case 'host':
+        await ctx.scheduler.runAfter(0, internal.stage.voiceHost, { roomId, step });
+        break;
       case 'speak':
         await ctx.scheduler.runAfter(0, internal.stage.speak, { roomId, step, index: stage.pending.index });
         break;
@@ -749,12 +1094,14 @@ export const state = query({
       .map((r) => ({ voterKey: r.voterKey, name: r.voterName, points: r.points, rounds: r.rounds }));
     const me = voterKey ? ledger.find((r) => r.voterKey === voterKey) : undefined;
 
-    // System prompts are the mode's business, not the audience's.
+    // System prompts are the mode's business, not the audience's. The opening
+    // line and the claim are the clock's, not the board's.
     const entrants = stage.entrants.map(({ system: _system, fallbackLine: _f, ...rest }) => rest);
+    const { pending: _pending, openingLine: _opening, claimedUntil: _claimed, ...board } = stage;
 
     return {
       status: room.status,
-      stage: { ...stage, entrants, pending: undefined },
+      stage: { ...board, entrants },
       tallies,
       totals,
       voters: new Set(votes.map((x) => x.voterKey)).size,

@@ -1,6 +1,7 @@
 import * as admin from 'firebase-admin';
 import { onRequest } from 'firebase-functions/v2/https';
 import { defineSecret } from 'firebase-functions/params';
+import { handleStageLive, type StageLiveBody } from './stageLive';
 
 /**
  * Inference bridge for the Convex game rooms.
@@ -41,7 +42,7 @@ const ANTHROPIC_VERSION = '2023-06-01';
 const DEFAULT_MODEL = 'claude-sonnet-5';
 const MAX_TOKENS = 1024;
 
-type Body = {
+type Body = StageLiveBody & {
   guildId?: string;
   /** Uid on whose behalf the room is spending this guild's key. */
   memberUid?: string;
@@ -70,7 +71,8 @@ export const roomTurn = onRequest(
 
     const body = (req.body ?? {}) as Body;
     const { guildId, memberUid, system, messages } = body;
-    if (!guildId || !system || !messages?.length) {
+    const stageOp = body.op === 'stage-ensure' || body.op === 'stage-speak';
+    if (!guildId || (!stageOp && (!system || !messages?.length))) {
       res.status(400).json({ error: 'guildId, system and messages are required' });
       return;
     }
@@ -106,6 +108,14 @@ export const roomTurn = onRequest(
     const member = await db.doc(`guilds/${guildId}/members/${memberUid}`).get();
     if (!member.exists) {
       res.status(403).json({ error: 'Not a member of that server' });
+      return;
+    }
+
+    // Same bridge, same secret. A stage face is a masky conversation, not an
+    // Anthropic call — and it spends the guild's mky_ key, not the Claude key.
+    if (stageOp) {
+      const result = await handleStageLive(db, guildId, body);
+      res.status(result.status).json(result.json);
       return;
     }
 
