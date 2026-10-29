@@ -155,13 +155,14 @@ export default function MarryMateMurderChannel({ guildId, channelId }: Props) {
       </div>
 
       <div className="flex-1 flex min-h-0">
-        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           <Stage
             data={stage.data}
             vote={stage.vote}
             canVote={Boolean(identity)}
             verbStyles={VERBS}
             hostName={room.room?.hostName ?? 'Masky'}
+            className="max-h-[62vh]"
             empty={
               <p className="text-sm text-[#8b8fa3]">
                 {isAdmin
@@ -170,6 +171,7 @@ export default function MarryMateMurderChannel({ guildId, channelId }: Props) {
               </p>
             }
           />
+          <div className="flex-1 min-h-[8.5rem] min-w-0 flex flex-col">
           <ChannelFeed
             guildId={guildId}
             channelId={channelId}
@@ -177,6 +179,7 @@ export default function MarryMateMurderChannel({ guildId, channelId }: Props) {
             humanKeys={room.humans.map((member) => member.memberKey)}
             currentUserId={firebaseUser?.uid}
           />
+          </div>
           {error && <p className="px-4 pb-1 text-xs text-red-400">{error}</p>}
           {identity ? (
             <MessageInput placeholder={`Message #${channelName}`} onSend={handleSend} />

@@ -120,7 +120,7 @@ export default function GuillotineChannel({ guildId, channelId }: Props) {
       </div>
 
       <div className="flex-1 flex min-h-0">
-        <div className="flex-1 flex flex-col min-w-0 min-h-0">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
           {game?.champion && (
             <div className="px-4 py-2 text-center text-sm font-semibold bg-amber-900/30 border-b border-amber-700/40 text-amber-200">
               👑 {game.champion} survived the blade and wins Guillotine!
@@ -132,6 +132,7 @@ export default function GuillotineChannel({ guildId, channelId }: Props) {
             canVote={Boolean(identity)}
             verbStyles={VERBS}
             hostName={room.room?.hostName ?? 'Masky'}
+            className="max-h-[62vh]"
             marker={{ verb: 'execute', icon: <span title="The guillotine">🗡️⛓️</span>, stamp: 'EXECUTED' }}
             empty={
               <p className="text-sm text-[#8b8fa3]">
@@ -141,6 +142,7 @@ export default function GuillotineChannel({ guildId, channelId }: Props) {
               </p>
             }
           />
+          <div className="flex-1 min-h-[8.5rem] min-w-0 flex flex-col">
           <ChannelFeed
             guildId={guildId}
             channelId={channelId}
@@ -148,6 +150,7 @@ export default function GuillotineChannel({ guildId, channelId }: Props) {
             humanKeys={room.members.filter((m) => m.kind === 'human').map((m) => m.memberKey)}
             currentUserId={firebaseUser?.uid}
           />
+          </div>
           {identity ? (
             <MessageInput placeholder={`Heckle the billionaires — #${channelName}`} onSend={handleSend} />
           ) : (
