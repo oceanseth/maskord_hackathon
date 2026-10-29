@@ -21,16 +21,21 @@ interface Props {
   guildId: string;
   channelId: string;
   /**
-   * Render as a strip above something else — a game board — rather than as the
-   * whole pane. Same tiles, same controls, same avatar switcher: a table you
-   * talk at should not be a second, poorer voice UI.
+   * Render as chrome for a game board rather than as the whole pane. Same
+   * tiles, same controls, same avatar switcher: a table you talk at should
+   * not be a second, poorer voice UI.
+   *
+   * `strip` (the default) sits above the board. `bar` is one row docked under
+   * the chat: faces on the left, mute / deafen / share on the right, so a
+   * stage at the top cannot push the conversation off the screen.
    */
   compact?: boolean;
+  chrome?: 'strip' | 'bar';
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function VoiceChannel({ guildId, channelId, compact = false }: Props) {
+export default function VoiceChannel({ guildId, channelId, compact = false, chrome = 'strip' }: Props) {
   const { firebaseUser } = useAuth();
   const {
     participants, localStream, isMuted, isDeafened, isConnected, localSpeaking,
@@ -148,8 +153,16 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
     maskAvatarUrl: selectedMask?.thumbnailUrl,
   });
 
+  const docked = compact && chrome === 'bar';
+
   return (
-    <div className={compact ? 'flex flex-col bg-[#0e0e16] border-b border-[#1e1e2e]' : 'flex-1 flex flex-col bg-[#0e0e16]'}>
+    <div className={
+      docked
+        ? 'relative shrink-0 grid grid-cols-1 items-center gap-2 border-t border-[#1e1e2e] bg-[#0a0a12] px-3 py-2 sm:grid-cols-[minmax(0,1fr)_auto]'
+        : compact
+          ? 'flex flex-col bg-[#0e0e16] border-b border-[#1e1e2e]'
+          : 'flex-1 flex flex-col bg-[#0e0e16]'
+    }>
       {/* Header */}
       <div className={`h-12 items-center gap-2 px-4 border-b border-[#1e1e2e] ${compact ? 'hidden' : 'flex'}`}>
         <MobileBackButton onClick={() => useAppStore.getState().setActiveChannel(null, 'voice')} />
@@ -185,7 +198,7 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
 
       {/* Microphone error banner */}
       {micError && (
-        <div className="mx-4 mt-4 px-4 py-3 bg-red-900/30 border border-red-700/50 rounded-lg text-red-300 text-sm">
+        <div className={`px-4 py-3 bg-red-900/30 border border-red-700/50 rounded-lg text-red-300 text-sm ${docked ? 'col-span-2 mx-0' : 'mx-4 mt-4'}`}>
           {micError}
         </div>
       )}
@@ -199,7 +212,7 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
             });
             clearNeedsInteraction();
           }}
-          className="mx-4 mt-3 px-4 py-3 w-[calc(100%-2rem)] text-left bg-violet-900/40 border border-violet-600/60 rounded-lg text-violet-200 text-sm hover:bg-violet-900/60 transition-colors flex items-center gap-3 cursor-pointer"
+          className={`px-4 py-3 text-left bg-violet-900/40 border border-violet-600/60 rounded-lg text-violet-200 text-sm hover:bg-violet-900/60 transition-colors flex items-center gap-3 cursor-pointer ${docked ? 'col-span-2' : 'mx-4 mt-3 w-[calc(100%-2rem)]'}`}
         >
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" className="flex-shrink-0 text-violet-400">
             <path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z" />
@@ -214,12 +227,14 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
       {/* Participant grid — scrolls on its own so it never pushes the chat or
           controls off-screen as more people join (min-h-0 lets a flex child
           actually shrink + scroll instead of growing to fit its content). */}
-      <div className={compact ? 'flex-shrink-0 max-h-56 overflow-y-auto p-3' : 'flex-1 min-h-0 p-6 overflow-y-auto'}>
+      <div className={docked ? 'min-w-0 overflow-x-auto' : compact ? 'flex-shrink-0 max-h-56 overflow-y-auto p-3' : 'flex-1 min-h-0 p-6 overflow-y-auto'}>
         <div
           className={
-            compact
-              ? 'grid grid-cols-3 md:grid-cols-5 lg:grid-cols-7 gap-2 auto-rows-fr'
-              : 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr'
+            docked
+              ? 'flex w-max items-center gap-2'
+              : compact
+                ? 'grid grid-cols-3 md:grid-cols-5 lg:grid-cols-7 gap-2 auto-rows-fr'
+                : 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 auto-rows-fr'
           }
         >
           {/* Local user tile — when a mask is on, show ONLY the mask identity. */}
@@ -234,6 +249,7 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
                 isMuted={isMuted}
                 speaking={localSpeaking && !isMuted}
                 isSelf
+                dense={docked}
                 onGearClick={() => setAvatarSettingsOpen(true)}
                 sharing={sharing}
                 onMaximize={() => setMaximizedId(firebaseUser.uid)}
@@ -257,6 +273,7 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
                   avatarUrl={avatarUrl}
                   stream={p.stream}
                   isMuted={p.state.muted}
+                  dense={docked}
                   sharing={p.state.sharing ?? null}
                   onMaximize={() => setMaximizedId(p.userId)}
                 />
@@ -273,6 +290,7 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
               avatarUrl={a.thumbnailUrl}
               stream={null}
               isMuted={false}
+              dense={docked}
               speaking={speakingAvatarId === a.avatarId || videoSpeakingId === a.avatarId}
               videoSrc={videoSpeakingId === a.avatarId ? videoSrc : null}
               onVideoEnded={handleVideoEnded}
@@ -281,7 +299,7 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
 
           {/* Invite tile */}
           {firebaseUser && (
-            <InviteTile guildId={guildId} channelId={channelId} inviterId={firebaseUser.uid} />
+            <InviteTile guildId={guildId} channelId={channelId} inviterId={firebaseUser.uid} dense={docked} />
           )}
         </div>
       </div>
@@ -325,12 +343,16 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
             kind={maxSharing}
             name={maxName}
             onMinimize={() => setMaximizedId(null)}
+            fullscreen={docked}
           />
         );
       })()}
 
-      {/* Voice controls bar */}
-      <div className="flex-shrink-0 border-t border-[#1e1e2e] bg-[#0a0a12] px-4 py-3 flex items-center justify-center gap-4">
+      {/* Voice controls. In the docked bar they are the right-hand cluster,
+          flush with the bottom of the screen, just under the chat. */}
+      <div className={docked
+        ? 'flex shrink-0 items-center justify-center gap-2 overflow-x-auto sm:justify-end'
+        : 'flex-shrink-0 border-t border-[#1e1e2e] bg-[#0a0a12] px-4 py-3 flex items-center justify-center gap-4'}>
         <VoiceButton
           active={!isMuted}
           activeColor="bg-violet-600 hover:bg-violet-500"
@@ -413,6 +435,7 @@ export default function VoiceChannel({ guildId, channelId, compact = false }: Pr
           onUpdate={updateVoiceSettings}
           onInputDeviceChange={updateInputDevice}
           onClose={() => setSettingsOpen(false)}
+          above={docked}
         />
       )}
 
@@ -441,7 +464,7 @@ interface SettingsPanelProps {
   onClose: () => void;
 }
 
-function VoiceSettingsPanel({ settings, inputs, outputs, onUpdate, onInputDeviceChange, onClose }: SettingsPanelProps) {
+function VoiceSettingsPanel({ settings, inputs, outputs, onUpdate, onInputDeviceChange, onClose, above = false }: SettingsPanelProps & { above?: boolean }) {
   const [bindingPtt, setBindingPtt] = useState(false);
 
   // Capture next keypress as the new PTT key
@@ -462,7 +485,7 @@ function VoiceSettingsPanel({ settings, inputs, outputs, onUpdate, onInputDevice
   }
 
   return (
-    <div className="absolute bottom-[72px] left-1/2 -translate-x-1/2 w-80 bg-[#12121f] border border-[#2a2a3e] rounded-2xl shadow-2xl z-50 p-5 space-y-5">
+    <div className={`absolute left-1/2 -translate-x-1/2 w-80 bg-[#12121f] border border-[#2a2a3e] rounded-2xl shadow-2xl z-50 p-5 space-y-5 ${above ? 'bottom-full mb-2' : 'bottom-[72px]'}`}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <span className="font-semibold text-white text-sm">Voice Settings</span>
@@ -609,11 +632,13 @@ function DeviceSelect({ devices, value, onChange, placeholder }: {
  * chat panel and controls reachable; on mobile it goes fixed and takes the
  * whole screen, where there is no room for anything else.
  */
-function MaximizedShare({ stream, kind, name, onMinimize }: {
+function MaximizedShare({ stream, kind, name, onMinimize, fullscreen = false }: {
   stream: MediaStream;
   kind: ShareKind;
   name: string;
   onMinimize: () => void;
+  /** Cover the screen. The docked bar is too short to host an expanded share. */
+  fullscreen?: boolean;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
 
@@ -633,7 +658,9 @@ function MaximizedShare({ stream, kind, name, onMinimize }: {
   }, [onMinimize]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-black md:absolute md:inset-x-0 md:top-0 md:bottom-auto md:h-full">
+    <div className={fullscreen
+      ? 'fixed inset-0 z-50 bg-black'
+      : 'fixed inset-0 z-50 bg-black md:absolute md:inset-x-0 md:top-0 md:bottom-auto md:h-full'}>
       <video
         ref={ref}
         autoPlay
@@ -694,9 +721,11 @@ interface TileProps {
   sharing?: ShareKind;
   /** Expand this tile's shared video. Omitted when there is nothing to expand. */
   onMaximize?: () => void;
+  /** Fixed-size face for the bottom call bar, name on the tooltip. */
+  dense?: boolean;
 }
 
-function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingOverride, isSelf, maskName, onGearClick, videoSrc, onVideoEnded, sharing, onMaximize }: TileProps) {
+function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingOverride, isSelf, maskName, onGearClick, videoSrc, onVideoEnded, sharing, onMaximize, dense = false }: TileProps) {
   const initials = name.substring(0, 2).toUpperCase();
   const liveVideoRef = useRef<HTMLVideoElement>(null);
 
@@ -722,11 +751,17 @@ function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingO
   // survives switching to text channels. No <audio> element is needed here.
 
   return (
-    <div className={`
-      aspect-square rounded-2xl border transition-all relative overflow-hidden bg-violet-600/20
-      ${isSelf ? 'border-violet-700/50' : 'border-[#1e1e2e]'}
-      ${speaking ? 'ring-2 ring-green-500 ring-offset-2 ring-offset-[#0e0e16]' : ''}
-    `}>
+    <div
+      title={dense ? `${name}${isSelf ? ' (you)' : ''}` : undefined}
+      className={dense
+        ? `w-12 h-12 shrink-0 rounded-xl border transition-all relative overflow-hidden bg-violet-600/20
+          ${isSelf ? 'border-violet-700/50' : 'border-[#1e1e2e]'}
+          ${speaking ? 'ring-2 ring-green-500 ring-offset-1 ring-offset-[#0a0a12]' : ''}`
+        : `aspect-square rounded-2xl border transition-all relative overflow-hidden bg-violet-600/20
+          ${isSelf ? 'border-violet-700/50' : 'border-[#1e1e2e]'}
+          ${speaking ? 'ring-2 ring-green-500 ring-offset-2 ring-offset-[#0e0e16]' : ''}`
+      }
+    >
 
       {/* A live screen/camera share takes the whole tile, replacing the avatar.
           Muted: the audio for this peer already plays through PersistentAudio. */}
@@ -752,11 +787,11 @@ function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingO
         <img src={avatarUrl} alt={name} className="absolute inset-0 w-full h-full object-cover" />
       ) : (
         <div className="absolute inset-0 flex items-center justify-center bg-violet-600/30">
-          <span className="font-bold text-5xl text-violet-200">{initials}</span>
+          <span className={`font-bold text-violet-200 ${dense ? 'text-sm' : 'text-5xl'}`}>{initials}</span>
         </div>
       )}
 
-      {/* Name bar — sits on top of the image */}
+      {!dense && (
       <div className="absolute left-0 right-0 bottom-0 bg-black/65 backdrop-blur-sm px-3 py-2">
         <p className="text-sm font-medium text-white truncate leading-tight">
           {name}{isSelf ? ' (you)' : ''}
@@ -765,13 +800,14 @@ function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingO
           <p className="text-[11px] text-violet-300 truncate leading-tight">{maskName}</p>
         )}
       </div>
+      )}
 
       {/* Maximize — only when there is a live share to expand */}
       {showLiveVideo && onMaximize && (
         <button
           onClick={onMaximize}
           title="Maximize"
-          className="absolute top-2 left-2 w-7 h-7 rounded-lg bg-black/60 hover:bg-black/80 flex items-center justify-center text-white transition-colors"
+          className={`absolute top-2 left-2 rounded-lg bg-black/60 hover:bg-black/80 flex items-center justify-center text-white transition-colors ${dense ? 'w-5 h-5' : 'w-7 h-7'}`}
         >
           <svg viewBox="0 0 24 24" fill="currentColor" className="w-4 h-4">
             <path d="M4 4h6v2H6v4H4V4zm10 0h6v6h-2V6h-4V4zM4 14h2v4h4v2H4v-6zm14 0h2v6h-6v-2h4v-4z" />
@@ -781,7 +817,7 @@ function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingO
 
       {/* Muted indicator */}
       {isMuted && (
-        <div className="absolute top-2 right-2 w-6 h-6 rounded-full bg-red-700 flex items-center justify-center shadow-lg">
+        <div className={`absolute rounded-full bg-red-700 flex items-center justify-center shadow-lg ${dense ? 'top-0.5 right-0.5 w-4 h-4 scale-75 origin-top-right' : 'top-2 right-2 w-6 h-6'}`}>
           <MutedIcon />
         </div>
       )}
@@ -791,8 +827,9 @@ function ParticipantTile({ name, avatarUrl, stream, isMuted, speaking: speakingO
         <button
           onClick={onGearClick}
           title="Avatar Settings"
-          className="absolute top-2 left-2 w-7 h-7 rounded-full bg-black/55 backdrop-blur-sm border border-white/15
-            flex items-center justify-center text-white hover:bg-violet-600/80 hover:border-violet-400 transition-colors"
+          className={`absolute rounded-full bg-black/55 backdrop-blur-sm border border-white/15
+            flex items-center justify-center text-white hover:bg-violet-600/80 hover:border-violet-400 transition-colors
+            ${dense ? 'top-0.5 left-0.5 w-5 h-5' : 'top-2 left-2 w-7 h-7'}`}
         >
           <GearIcon />
         </button>
@@ -881,7 +918,7 @@ function VoiceButton({
 
 // ─── Invite Tile ──────────────────────────────────────────────────────────────
 
-function InviteTile({ guildId, channelId, inviterId }: { guildId: string; channelId: string; inviterId: string }) {
+function InviteTile({ guildId, channelId, inviterId, dense = false }: { guildId: string; channelId: string; inviterId: string; dense?: boolean }) {
   const [loading, setLoading] = useState(false);
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -919,10 +956,19 @@ function InviteTile({ guildId, channelId, inviterId }: { guildId: string; channe
       <button
         onClick={handleOpen}
         disabled={loading}
-        className="aspect-square rounded-2xl flex flex-col items-center justify-center gap-3
+        title="Invite"
+        className={dense
+          ? 'w-12 h-12 shrink-0 rounded-xl flex items-center justify-center bg-[#12121a] border border-dashed border-[#2a2a3e] hover:border-violet-600/60 hover:bg-[#1a1a28] transition-colors disabled:opacity-50'
+          : `aspect-square rounded-2xl flex flex-col items-center justify-center gap-3
           bg-[#12121a] border border-dashed border-[#2a2a3e] hover:border-violet-600/60
-          hover:bg-[#1a1a28] transition-colors relative overflow-hidden disabled:opacity-50"
+          hover:bg-[#1a1a28] transition-colors relative overflow-hidden disabled:opacity-50`}
       >
+        {dense ? (
+          loading
+            ? <div className="w-4 h-4 rounded-full border-2 border-violet-400 border-t-transparent animate-spin" />
+            : <LinkIcon />
+        ) : (
+          <>
         <div className="w-16 h-16 rounded-full bg-violet-600/10 border-2 border-violet-600/30
           flex items-center justify-center flex-shrink-0">
           {loading
@@ -933,6 +979,8 @@ function InviteTile({ guildId, channelId, inviterId }: { guildId: string; channe
         <span className="text-sm font-medium text-[#6b7280] truncate px-2 max-w-full">
           {loading ? 'Generating...' : 'Invite'}
         </span>
+          </>
+        )}
       </button>
 
       {(inviteUrl !== null || error !== null) && (

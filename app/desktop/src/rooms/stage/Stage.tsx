@@ -175,9 +175,11 @@ interface StageProps {
   hostName?: string;
   /** Shown when the stage has nothing on it yet. */
   empty?: ReactNode;
+  /** Extra classes on the stage shell, usually a max height so the chat stays on screen. */
+  className?: string;
 }
 
-export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Masky', empty }: StageProps) {
+export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Masky', empty, className = '' }: StageProps) {
   const [muted, setMuted] = useState(() => localStorage.getItem(MUTE_KEY) === '1');
   const audible = useStageVoice(data, muted);
   const stage = data?.stage;
@@ -203,7 +205,7 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
 
   if (!data || !stage || stage.entrants.length === 0) {
     return (
-      <div className="relative flex flex-col items-center justify-center gap-3 py-8 bg-gradient-to-b from-[#1a1028] to-[#0e0e16] border-b border-[#1e1e2e]">
+      <div className={`relative flex flex-col items-center justify-center gap-3 py-8 bg-gradient-to-b from-[#1a1028] to-[#0e0e16] border-b border-[#1e1e2e] min-h-0 overflow-y-auto shrink ${className}`}>
         <StageStyles />
         <HostFrame name={hostName} talking={talking === 'host'} liveUrl={muted ? undefined : stage?.hostLive?.liveUrl} />
         {stage?.line?.label === 'host' && <Subtitle text={stage.line.text} />}
@@ -257,7 +259,7 @@ export function Stage({ data, vote, canVote, verbStyles, marker, hostName = 'Mas
   };
 
   return (
-    <div className="relative flex flex-col gap-2 px-4 pt-3 pb-4 bg-gradient-to-b from-[#1a1028] to-[#0e0e16] border-b border-[#1e1e2e] flex-shrink-0">
+    <div className={`relative flex flex-col gap-2 px-4 pt-3 pb-4 bg-gradient-to-b from-[#1a1028] to-[#0e0e16] border-b border-[#1e1e2e] min-h-0 overflow-y-auto shrink ${className}`}>
       <StageStyles />
 
       {/* Status rail: host, caption, phase, mute. */}

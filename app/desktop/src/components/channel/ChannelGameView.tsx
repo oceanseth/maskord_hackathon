@@ -78,15 +78,23 @@ export default function ChannelGameView({ guildId, channelId, mode }: Props) {
   if (board) {
     return isVoice ? (
       <div className="flex-1 flex flex-col min-h-0 min-w-0">
-        {/* The real voice surface, compacted: same tiles, same mute/deafen/
-            share/settings controls, same gear that opens the avatar switcher.
-            A table you talk at should not get a poorer voice UI than a voice
-            channel — so it gets that one. */}
-        <VoiceChannel guildId={guildId} channelId={channelId} compact />
-        {isStageMode && channel && (
-          <TwitchIngestSync guildId={guildId} channelId={channelId} mode={mode} channel={channel} />
+        {/* Stage modes keep the board first so the stage is the top of the
+            pane and the call controls sit on the bottom edge, under the chat.
+            Other tables keep the voice strip above the board. */}
+        {isStageMode ? (
+          <>
+            {channel && (
+              <TwitchIngestSync guildId={guildId} channelId={channelId} mode={mode} channel={channel} />
+            )}
+            {board}
+            <VoiceChannel guildId={guildId} channelId={channelId} compact chrome="bar" />
+          </>
+        ) : (
+          <>
+            <VoiceChannel guildId={guildId} channelId={channelId} compact />
+            {board}
+          </>
         )}
-        {board}
       </div>
     ) : (
       board
